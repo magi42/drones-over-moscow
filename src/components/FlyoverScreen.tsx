@@ -49,24 +49,19 @@ export function FlyoverScreen() {
   const survivors = useGameStore((state) => state.survivors)
   const paused = useGameStore((state) => state.paused)
   const togglePause = useGameStore((state) => state.togglePause)
-  const requestAttack = useGameStore((state) => state.requestAttack)
   const setSettingsOpen = useGameStore((state) => state.setSettingsOpen)
   const bindings = useGameStore((state) => state.settings.bindings)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code === bindings.pause) togglePause()
-      if (event.code === bindings.attack && !event.repeat) {
-        setAttackMode(true)
-        requestAttack()
-      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [bindings.attack, bindings.pause, requestAttack, togglePause])
+  }, [bindings.pause, togglePause])
 
   return (
-    <section className="screen flyover-screen">
+    <section className={`screen flyover-screen ${attackMode ? 'attack-active' : ''}`}>
       <FlightAudio />
       <Canvas
         shadows
@@ -97,8 +92,8 @@ export function FlyoverScreen() {
         <span>{attackMode ? 'ATTACK LINK' : 'AIR DEFENSE'}</span>
         <strong>
           {attackMode
-            ? 'ONE DRONE MANUAL / FORMATION AUTOPILOT'
-            : `${stations.destroyed}/${stations.total} STATIONS DESTROYED`}
+            ? 'DRONE INTERCEPT IN PROGRESS'
+            : `${stations.destroyed}/${stations.total} DESTROYED · CLICK A STATION`}
         </strong>
       </div>
       <div className="formation-status">
@@ -116,9 +111,8 @@ export function FlyoverScreen() {
         <span>EXTRACT</span>
       </div>
       <div className="control-strip">
-        <span>WASD / LEFT STICK</span>{' '}
-        {attackMode ? 'ATTACK DRONE CONTROL' : 'FORMATION CONTROL'} ·{' '}
-        <span>SPACE / GAMEPAD A</span> ATTACK RUN
+        <span>WASD / LEFT STICK</span> FORMATION CONTROL ·{' '}
+        <span>MOUSE CLICK</span> SELECT AIR-DEFENSE TARGET
       </div>
       {paused && (
         <div className="pause-overlay">

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { readableKey, type InputAction } from '../game/input'
 import { useGameStore } from '../store/gameStore'
 
-const actions: InputAction[] = ['left', 'right', 'up', 'down', 'attack', 'pause']
+const actions: InputAction[] = ['left', 'right', 'up', 'down', 'pause']
 
 export function SettingsPanel() {
   const open = useGameStore((state) => state.settingsOpen)

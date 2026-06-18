@@ -25,7 +25,7 @@ describe('input mapping', () => {
   it('maps configurable key codes to actions', () => {
     expect(actionForCode('KeyA', DEFAULT_BINDINGS)).toBe('left')
     expect(actionForCode('Escape', DEFAULT_BINDINGS)).toBe('pause')
-    expect(actionForCode('Space', DEFAULT_BINDINGS)).toBe('attack')
+    expect(actionForCode('Space', DEFAULT_BINDINGS)).toBeNull()
     expect(actionForCode('Enter', DEFAULT_BINDINGS)).toBeNull()
     expect(readableKey('ArrowLeft')).toBe('Arrow Left')
   })
@@ -63,7 +63,7 @@ describe('game state machine', () => {
       score: 0,
       bestScore: 0,
       survivors: 4,
-      attackRequest: 0,
+      runSeed: 1,
       paused: false,
       runWon: false,
       settingsOpen: false,
@@ -93,8 +93,6 @@ describe('game state machine', () => {
     expect(useGameStore.getState().loseDrone()).toBe(3)
     useGameStore.getState().replenishFleet()
     expect(useGameStore.getState().survivors).toBe(4)
-    useGameStore.getState().requestAttack()
-    expect(useGameStore.getState().attackRequest).toBe(1)
     useGameStore.getState().togglePause()
     expect(useGameStore.getState().paused).toBe(true)
   })

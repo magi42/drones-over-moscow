@@ -1,7 +1,7 @@
-import { Sky } from '@react-three/drei'
+import { Sky, useGLTF } from '@react-three/drei'
 import { Physics, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import {
   CHECKPOINTS,
@@ -15,6 +15,8 @@ import {
   type MissileTrajectory,
 } from '../game/missile'
 import { useGameStore } from '../store/gameStore'
+import apartmentBlockUrl from '../assets/assets/models/rundown_15_storey_panel_block.glb'
+import oilTankRoofUrl from '../assets/assets/models/oil_tank_roof_blowoff_flat.glb'
 
 type GameWorldProps = {
   onProgress: (progress: number) => void
@@ -28,7 +30,6 @@ type InputState = {
   right: boolean
   up: boolean
   down: boolean
-  attack: boolean
 }
 
 const droneOffsets: [number, number, number][] = [
@@ -38,24 +39,39 @@ const droneOffsets: [number, number, number][] = [
   [0, -0.55, 5],
 ]
 
-const buildingData = Array.from({ length: 52 }, (_, index) => {
-  const side = index % 2 === 0 ? -1 : 1
-  const row = Math.floor(index / 2)
-  const rand = mulberry32(4100 + index)
-  return {
-    position: [side * (9 + rand() * 17), rand() * 1.2 - 2, -row * 11 + rand() * 5] as [
-      number,
-      number,
-      number,
-    ],
-    scale: [4 + rand() * 7, 5 + rand() * 18, 4 + rand() * 8] as [
-      number,
-      number,
-      number,
-    ],
-    color: rand() > 0.55 ? '#4f554f' : '#373e3c',
-  }
-})
+type BuildingData = {
+  position: [number, number, number]
+  scale: [number, number, number]
+  color: string
+  apartmentBlock: boolean
+  rotation: number
+}
+
+type StationData = {
+  buildingIndex: number
+  position: [number, number, number]
+}
+
+function createBuildings(seed: number): BuildingData[] {
+  const random = mulberry32(seed)
+  return Array.from({ length: 52 }, (_, index) => {
+    const side = index % 2 === 0 ? -1 : 1
+    const row = Math.floor(index / 2)
+    const visibleHeight = 9 + random() * 17
+    const scale: [number, number, number] = [13.4, visibleHeight, 9]
+    return {
+      position: [
+        side * (16 + random() * 28),
+        -3 + visibleHeight / 2,
+        -row * 11 + random() * 5,
+      ],
+      scale,
+      color: '#ffffff',
+      apartmentBlock: true,
+      rotation: side > 0 ? Math.PI : 0,
+    }
+  })
+}
 
 const tankData = Array.from({ length: 12 }, (_, index) => ({
   position: [
@@ -65,20 +81,26 @@ const tankData = Array.from({ length: 12 }, (_, index) => ({
   ] as [number, number, number],
 }))
 
-const stationData = [7, 17, 29, 39].map((buildingIndex) => {
-  const building = buildingData[buildingIndex]
-  return {
-    buildingIndex,
-    position: [
-      building.position[0],
-      building.position[1] + building.scale[1] / 2 + 0.42,
-      building.position[2],
-    ] as [number, number, number],
-  }
-})
+function createStations(buildings: BuildingData[]): StationData[] {
+  return [7, 17, 29, 39].map((buildingIndex) => {
+    const building = buildings[buildingIndex]
+    return {
+      buildingIndex,
+      position: [
+        building.position[0],
+        building.position[1] + building.scale[1] / 2 + 0.42,
+        building.position[2],
+      ],
+    }
+  })
+}
 
-export function collidesWithBuilding(position: THREE.Vector3, radius = 1.1) {
-  return buildingData.some((building) => {
+export function collidesWithBuilding(
+  position: THREE.Vector3,
+  buildings: BuildingData[],
+  radius = 1.1,
+) {
+  return buildings.some((building) => {
     const [x, y, z] = building.position
     const [width, height, depth] = building.scale
     return (
@@ -96,14 +118,12 @@ function useFlightInput() {
     right: false,
     up: false,
     down: false,
-    attack: false,
   })
 
   useEffect(() => {
     const setKey = (event: KeyboardEvent, pressed: boolean) => {
       const action = actionForCode(event.code, bindings)
       if (!action || action === 'pause') return
-      if (action === 'attack') return
       input.current[action] = pressed
     }
     const down = (event: KeyboardEvent) => setKey(event, true)
@@ -174,25 +194,79 @@ function Drone({
   )
 }
 
-function City() {
-  const buildings = useRef<THREE.InstancedMesh>(null)
-
-  useLayoutEffect(() => {
-    if (!buildings.current) return
-    const transform = new THREE.Object3D()
-    buildingData.forEach((building, index) => {
-      transform.position.set(...building.position)
-      transform.scale.set(...building.scale)
-      transform.updateMatrix()
-      buildings.current!.setMatrixAt(index, transform.matrix)
-      buildings.current!.setColorAt(index, new THREE.Color(building.color))
+function ApartmentBlock({ building }: { building: BuildingData }) {
+  const { scene } = useGLTF(apartmentBlockUrl)
+  const model = useMemo(() => {
+    const clone = scene.clone(true)
+    clone.traverse((object: THREE.Object3D) => {
+      if (object instanceof THREE.Mesh) {
+        object.castShadow = true
+        object.receiveShadow = true
+        const sourceMaterials = Array.isArray(object.material)
+          ? object.material
+          : [object.material]
+        const brightened = sourceMaterials.map((sourceMaterial) => {
+          const material = sourceMaterial.clone()
+          if (material instanceof THREE.MeshStandardMaterial) {
+            material.color.lerp(new THREE.Color('#ffffff'), 0.68)
+            material.emissive.set('#69746d')
+            material.emissiveIntensity = 0.38
+            material.roughness = Math.min(material.roughness, 0.76)
+          }
+          return material
+        })
+        object.material = Array.isArray(object.material)
+          ? brightened
+          : brightened[0]
+      }
     })
-    buildings.current.instanceMatrix.needsUpdate = true
-    if (buildings.current.instanceColor) {
-      buildings.current.instanceColor.needsUpdate = true
-    }
-  }, [])
+    return clone
+  }, [scene])
+  const modelScale = 0.55
+  const fullModelHeight = 48.83 * modelScale
+  const roofHeight = building.position[1] + building.scale[1] / 2
 
+  return (
+    <primitive
+      object={model}
+      position={[
+        building.position[0],
+        roofHeight - fullModelHeight,
+        building.position[2],
+      ]}
+      rotation={[0, building.rotation, 0]}
+      scale={modelScale}
+    />
+  )
+}
+
+useGLTF.preload(apartmentBlockUrl)
+
+function OilTankRoofModel() {
+  const { scene } = useGLTF(oilTankRoofUrl)
+  const model = useMemo(() => {
+    const clone = scene.clone(true)
+    clone.traverse((object: THREE.Object3D) => {
+      if (object instanceof THREE.Mesh) {
+        object.castShadow = true
+        object.receiveShadow = true
+      }
+    })
+    return clone
+  }, [scene])
+
+  return (
+    <primitive
+      object={model}
+      rotation={[-Math.PI / 2, 0, 0]}
+      scale={1.06}
+    />
+  )
+}
+
+useGLTF.preload(oilTankRoofUrl)
+
+function City({ buildings: buildingData }: { buildings: BuildingData[] }) {
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, -85]} receiveShadow>
@@ -203,15 +277,12 @@ function City() {
         <planeGeometry args={[12, 260]} />
         <meshStandardMaterial color="#171a19" roughness={0.9} />
       </mesh>
-      <instancedMesh
-        ref={buildings}
-        args={[undefined, undefined, buildingData.length]}
-        castShadow
-        receiveShadow
-      >
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial color="#ffffff" roughness={0.88} />
-      </instancedMesh>
+      {buildingData.map((building, index) => (
+        <ApartmentBlock
+          key={`${building.position.join('-')}-${index}`}
+          building={building}
+        />
+      ))}
       {Array.from({ length: 26 }, (_, index) => (
         <mesh key={index} position={[0, -2.75, 10 - index * 10]}>
           <boxGeometry args={[0.15, 0.05, 4]} />
@@ -275,54 +346,83 @@ function DebrisField({ count }: { count: number }) {
 }
 
 function OilTank({
+  index,
   position,
   exploded,
+  onLidPosition,
 }: {
+  index: number
   position: [number, number, number]
   exploded: boolean
+  onLidPosition: (index: number, position: THREE.Vector3 | null) => void
 }) {
   return (
     <group position={position}>
       <mesh castShadow receiveShadow>
         <cylinderGeometry args={[4.3, 4.3, 3.4, 20]} />
-        <meshStandardMaterial color={exploded ? '#342f28' : '#8c9287'} metalness={0.7} roughness={0.48} />
+        <meshStandardMaterial
+          color={exploded ? '#4c4b45' : '#b7b9ae'}
+          metalness={0.58}
+          roughness={0.48}
+        />
       </mesh>
       {!exploded && (
-        <group position={[0, 1.86, 0]}>
-          <mesh castShadow scale={[1, 0.19, 1]}>
-            <sphereGeometry args={[4.45, 24, 12]} />
-            <meshStandardMaterial color="#aeb6aa" metalness={0.76} roughness={0.36} />
-          </mesh>
-          <mesh position={[0, -0.34, 0]} castShadow>
-            <cylinderGeometry args={[4.42, 4.42, 0.34, 24]} />
-            <meshStandardMaterial color="#979f95" metalness={0.72} roughness={0.4} />
-          </mesh>
+        <group position={[0, 1.93, 0]}>
+          <OilTankRoofModel />
         </group>
       )}
       {exploded && (
-        <RigidBody
-          type="dynamic"
-          position={[0, 1.86, 0]}
-          colliders="hull"
-          mass={2}
-          restitution={0.42}
-          linearVelocity={[position[0] > 0 ? -7 : 7, 24, 3]}
-          angularVelocity={[8, 4, 12]}
-        >
-          <group>
-            <mesh castShadow scale={[1, 0.19, 1]}>
-              <sphereGeometry args={[4.45, 24, 12]} />
-              <meshStandardMaterial color="#aeb6aa" metalness={0.76} roughness={0.36} />
-            </mesh>
-            <mesh position={[0, -0.34, 0]} castShadow>
-              <cylinderGeometry args={[4.42, 4.42, 0.34, 24]} />
-              <meshStandardMaterial color="#979f95" metalness={0.72} roughness={0.4} />
-            </mesh>
-          </group>
-        </RigidBody>
+        <FlyingTankLid
+          index={index}
+          position={position}
+          onPosition={onLidPosition}
+        />
       )}
       {exploded && <Explosion />}
     </group>
+  )
+}
+
+function FlyingTankLid({
+  index,
+  position,
+  onPosition,
+}: {
+  index: number
+  position: [number, number, number]
+  onPosition: (index: number, position: THREE.Vector3 | null) => void
+}) {
+  const body = useRef<import('@react-three/rapier').RapierRigidBody>(null)
+
+  useFrame(() => {
+    if (!body.current) return
+    const translation = body.current.translation()
+    onPosition(
+      index,
+      new THREE.Vector3(translation.x, translation.y, translation.z),
+    )
+  })
+
+  useEffect(
+    () => () => {
+      onPosition(index, null)
+    },
+    [index, onPosition],
+  )
+
+  return (
+    <RigidBody
+      ref={body}
+      type="dynamic"
+      position={[0, 1.93, 0]}
+      colliders="hull"
+      mass={2}
+      restitution={0.42}
+      linearVelocity={[position[0] > 0 ? -7 : 7, 24, 3]}
+      angularVelocity={[8, 4, 12]}
+    >
+      <OilTankRoofModel />
+    </RigidBody>
   )
 }
 
@@ -351,12 +451,39 @@ function Explosion() {
 function AirDefenseStation({
   position,
   destroyed,
+  targeted,
+  onSelect,
 }: {
   position: [number, number, number]
   destroyed: boolean
+  targeted: boolean
+  onSelect: () => void
 }) {
   return (
-    <group position={position}>
+    <group
+      position={position}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (!destroyed) onSelect()
+      }}
+      onPointerOver={(event) => {
+        event.stopPropagation()
+        if (!destroyed) document.body.style.cursor = 'crosshair'
+      }}
+      onPointerOut={() => {
+        document.body.style.cursor = ''
+      }}
+    >
+      {!destroyed && (
+        <mesh position={[0, -2.3, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[2.35, 2.7, 5.4, 12]} />
+          <meshStandardMaterial
+            color="#687361"
+            metalness={0.28}
+            roughness={0.72}
+          />
+        </mesh>
+      )}
       <mesh castShadow receiveShadow>
         <cylinderGeometry args={[3.3, 3.8, 0.8, 10]} />
         <meshStandardMaterial color={destroyed ? '#292723' : '#596451'} roughness={0.82} />
@@ -380,6 +507,15 @@ function AirDefenseStation({
             <meshStandardMaterial color="#202823" emissive="#f13f2f" emissiveIntensity={1.8} />
           </mesh>
           <pointLight position={[0, 2.2, -1.6]} color="#ff3d2c" intensity={2} distance={9} />
+          <mesh position={[0, 4.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[3.7, 4, 32]} />
+            <meshBasicMaterial
+              color={targeted ? '#ffcf45' : '#ff5b35'}
+              transparent
+              opacity={targeted ? 0.95 : 0.5}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
         </>
       )}
       {destroyed && <Explosion />}
@@ -394,6 +530,8 @@ function Missiles({
   destroyedStations,
   destroyedTanks,
   onImpact,
+  buildings: buildingData,
+  stations: stationData,
 }: {
   target: React.RefObject<THREE.Group | null>
   active: boolean
@@ -401,6 +539,8 @@ function Missiles({
   destroyedStations: Set<number>
   destroyedTanks: Set<number>
   onImpact: (impact: MissileImpact) => void
+  buildings: BuildingData[]
+  stations: StationData[]
 }) {
   const meshRefs = useRef<(THREE.Group | null)[]>([])
   const random = useMemo(() => mulberry32(8128), [])
@@ -549,6 +689,131 @@ type MissileImpact = {
   position: { x: number; y: number; z: number }
 }
 
+type AttackFlightData = {
+  id: number
+  slot: number
+  targetIndex: number
+  start: [number, number, number]
+}
+
+type ReplacementFlightData = {
+  id: number
+  slot: number
+  start: [number, number, number]
+}
+
+function AttackFlight({
+  flight,
+  station,
+  paused,
+  lidPositions,
+  onStrike,
+  onDestroyed,
+}: {
+  flight: AttackFlightData
+  station: StationData
+  paused: boolean
+  lidPositions: React.RefObject<Map<number, THREE.Vector3>>
+  onStrike: (flight: AttackFlightData, position: THREE.Vector3) => void
+  onDestroyed: (flight: AttackFlightData, position: THREE.Vector3) => void
+}) {
+  const group = useRef<THREE.Group>(null)
+  const age = useRef(0)
+  const complete = useRef(false)
+
+  useFrame((_, delta) => {
+    if (paused || complete.current || !group.current) return
+    age.current += delta
+    const target = new THREE.Vector3(
+      station.position[0],
+      station.position[1] + 1.5,
+      station.position[2],
+    )
+    const direction = target.clone().sub(group.current.position)
+    const distance = direction.length()
+    const speed = Math.min(30, 3.05 + age.current * 4.5)
+    group.current.position.add(
+      direction.normalize().multiplyScalar(Math.min(distance, speed * delta)),
+    )
+    group.current.lookAt(target)
+    group.current.rotation.y += Math.PI
+
+    for (const lid of lidPositions.current.values()) {
+      if (group.current.position.distanceTo(lid) < 4.6) {
+        complete.current = true
+        onDestroyed(flight, group.current.position.clone())
+        return
+      }
+    }
+    if (distance < 1.2) {
+      complete.current = true
+      onStrike(flight, group.current.position.clone())
+    }
+  })
+
+  return (
+    <group ref={group} position={flight.start}>
+      <Drone offset={[0, 0, 0]} active />
+    </group>
+  )
+}
+
+function ReplacementFlight({
+  flight,
+  formation,
+  paused,
+  lidPositions,
+  onJoined,
+  onDestroyed,
+}: {
+  flight: ReplacementFlightData
+  formation: React.RefObject<THREE.Group | null>
+  paused: boolean
+  lidPositions: React.RefObject<Map<number, THREE.Vector3>>
+  onJoined: (flight: ReplacementFlightData) => void
+  onDestroyed: (
+    flight: ReplacementFlightData,
+    position: THREE.Vector3,
+  ) => void
+}) {
+  const group = useRef<THREE.Group>(null)
+  const joined = useRef(false)
+
+  useFrame((_, delta) => {
+    if (paused || joined.current || !group.current || !formation.current) return
+    const offset = droneOffsets[flight.slot]
+    const target = new THREE.Vector3(
+      formation.current.position.x + offset[0],
+      formation.current.position.y + offset[1],
+      formation.current.position.z + offset[2],
+    )
+    const distance = group.current.position.distanceTo(target)
+    group.current.position.lerp(
+      target,
+      Math.min(1, delta * (2.5 + Math.min(distance / 10, 3.5))),
+    )
+    group.current.lookAt(target)
+    group.current.rotation.y += Math.PI
+    for (const lid of lidPositions.current.values()) {
+      if (group.current.position.distanceTo(lid) < 4.6) {
+        joined.current = true
+        onDestroyed(flight, group.current.position.clone())
+        return
+      }
+    }
+    if (distance < 0.3) {
+      joined.current = true
+      onJoined(flight)
+    }
+  })
+
+  return (
+    <group ref={group} position={flight.start}>
+      <Drone offset={[0, 0, 0]} active />
+    </group>
+  )
+}
+
 function Simulation({
   onProgress,
   onAltitude,
@@ -557,40 +822,44 @@ function Simulation({
 }: GameWorldProps) {
   const routeId = useGameStore((state) => state.route)!
   const route = ROUTES[routeId]
+  const runSeed = useGameStore((state) => state.runSeed)
   const paused = useGameStore((state) => state.paused)
   const survivors = useGameStore((state) => state.survivors)
-  const attackRequest = useGameStore((state) => state.attackRequest)
   const addScore = useGameStore((state) => state.addScore)
   const loseDrone = useGameStore((state) => state.loseDrone)
   const replenishFleet = useGameStore((state) => state.replenishFleet)
   const finishRun = useGameStore((state) => state.finishRun)
   const reducedEffects = useGameStore((state) => state.settings.reducedEffects)
+  const buildings = useMemo(() => createBuildings(runSeed), [runSeed])
+  const stations = useMemo(() => createStations(buildings), [buildings])
   const input = useFlightInput()
   const formation = useRef<THREE.Group>(null)
-  const attackDrone = useRef<THREE.Group>(null)
   const elapsed = useRef(0)
   const accumulator = useRef(0)
   const lastHudUpdate = useRef(0)
   const checkpointIndex = useRef(0)
   const nearMissIndex = useRef(1)
   const damageCooldown = useRef(0)
-  const attackPressed = useRef(false)
-  const consumedAttackRequest = useRef(0)
-  const attackModeRef = useRef(false)
   const finished = useRef(false)
+  const nextFlightId = useRef(1)
+  const lidPositions = useRef<Map<number, THREE.Vector3>>(new Map())
+  const lidHitCooldown = useRef(0)
   const [explodedTanks, setExplodedTanks] = useState<Set<number>>(new Set())
   const [destroyedStations, setDestroyedStations] = useState<Set<number>>(
     new Set(),
   )
-  const [attackMode, setAttackMode] = useState(false)
-  const [attackStart, setAttackStart] = useState<[number, number, number]>([
-    0, 8, 8,
-  ])
+  const [attacks, setAttacks] = useState<AttackFlightData[]>([])
+  const [replacements, setReplacements] = useState<ReplacementFlightData[]>([])
+  const [refillingSlots, setRefillingSlots] = useState<Set<number>>(new Set())
   const [droneExplosions, setDroneExplosions] = useState<
     { id: number; position: [number, number, number] }[]
   >([])
   const explosionId = useRef(0)
   const { camera } = useThree()
+
+  useEffect(() => {
+    onAttackMode(attacks.length > 0)
+  }, [attacks.length, onAttackMode])
 
   const addImpactExplosion = (position: { x: number; y: number; z: number }) => {
     setDroneExplosions((current) => [
@@ -612,6 +881,97 @@ function Simulation({
     return remaining
   }
 
+  const launchAtStation = (stationIndex: number) => {
+    const targeted = attacks.some((attack) => attack.targetIndex === stationIndex)
+    const availableSlot = droneOffsets.findIndex(
+      (_, slot) => slot < survivors && !refillingSlots.has(slot),
+    )
+    if (
+      paused ||
+      destroyedStations.has(stationIndex) ||
+      targeted ||
+      availableSlot < 0 ||
+      !formation.current
+    ) {
+      return
+    }
+    const id = nextFlightId.current++
+    const offset = droneOffsets[availableSlot]
+    const start: [number, number, number] = [
+      formation.current.position.x + offset[0],
+      formation.current.position.y + offset[1],
+      formation.current.position.z + offset[2],
+    ]
+    setAttacks((current) => [
+      ...current,
+      { id, slot: availableSlot, targetIndex: stationIndex, start },
+    ])
+    setReplacements((current) => [
+      ...current,
+      {
+        id,
+        slot: availableSlot,
+        start: [
+          formation.current!.position.x + offset[0],
+          formation.current!.position.y + offset[1] - 1.5,
+          formation.current!.position.z + 38 + availableSlot * 3,
+        ],
+      },
+    ])
+    setRefillingSlots((current) => new Set(current).add(availableSlot))
+  }
+
+  const completeAttack = (
+    flight: AttackFlightData,
+    position: THREE.Vector3,
+  ) => {
+    setAttacks((current) => current.filter((item) => item.id !== flight.id))
+    setDestroyedStations((current) => {
+      if (current.has(flight.targetIndex)) return current
+      const next = new Set(current).add(flight.targetIndex)
+      onStations(next.size, stations.length)
+      return next
+    })
+    addScore('airDefense')
+    addImpactExplosion(position)
+    replenishFleet()
+  }
+
+  const destroyAttack = (
+    flight: AttackFlightData,
+    position: THREE.Vector3,
+  ) => {
+    setAttacks((current) => current.filter((item) => item.id !== flight.id))
+    addImpactExplosion(position)
+  }
+
+  const joinReplacement = (flight: ReplacementFlightData) => {
+    setReplacements((current) => current.filter((item) => item.id !== flight.id))
+    setRefillingSlots((current) => {
+      const next = new Set(current)
+      next.delete(flight.slot)
+      return next
+    })
+  }
+
+  const destroyReplacement = (
+    flight: ReplacementFlightData,
+    position: THREE.Vector3,
+  ) => {
+    setReplacements((current) => current.filter((item) => item.id !== flight.id))
+    setRefillingSlots((current) => {
+      const next = new Set(current)
+      next.delete(flight.slot)
+      return next
+    })
+    addImpactExplosion(position)
+    const remaining = loseDrone()
+    if (remaining === 0) {
+      finished.current = true
+      finishRun(false)
+    }
+  }
+
   useFrame((_, frameDelta) => {
     if (paused || finished.current || !formation.current) return
     accumulator.current += Math.min(frameDelta, 0.1)
@@ -621,6 +981,7 @@ function Simulation({
       accumulator.current -= fixedDelta
       elapsed.current += fixedDelta
       damageCooldown.current = Math.max(0, damageCooldown.current - fixedDelta)
+      lidHitCooldown.current = Math.max(0, lidHitCooldown.current - fixedDelta)
 
       const gamepad = navigator.getGamepads?.()[0]
       const horizontal =
@@ -631,74 +992,16 @@ function Simulation({
         (input.current.up ? 1 : 0) -
         (input.current.down ? 1 : 0) -
         (gamepad?.axes[1] ?? 0)
-      const gamepadAttack = Boolean(gamepad?.buttons[0]?.pressed)
-      const keyboardAttack = attackRequest > consumedAttackRequest.current
-      const attackRequested = keyboardAttack || gamepadAttack
-
-      if (
-        attackRequested &&
-        (keyboardAttack || !attackPressed.current) &&
-        !attackModeRef.current &&
-        survivors > 0
-      ) {
-        attackModeRef.current = true
-        setAttackMode(true)
-        setAttackStart([
-          formation.current.position.x,
-          formation.current.position.y,
-          formation.current.position.z,
-        ])
-        onAttackMode(true)
-      }
-      if (keyboardAttack) consumedAttackRequest.current = attackRequest
-      attackPressed.current = gamepadAttack
-
-      if (attackModeRef.current) {
-        formation.current.position.x = THREE.MathUtils.lerp(
-          formation.current.position.x,
-          0,
-          fixedDelta * 0.45,
-        )
-        formation.current.position.y = THREE.MathUtils.lerp(
-          formation.current.position.y,
-          15,
-          fixedDelta * 0.35,
-        )
-        if (attackDrone.current) {
-          attackDrone.current.position.x = THREE.MathUtils.clamp(
-            attackDrone.current.position.x + horizontal * fixedDelta * 13,
-            -28,
-            28,
-          )
-          attackDrone.current.position.y = THREE.MathUtils.clamp(
-            attackDrone.current.position.y + vertical * fixedDelta * 11,
-            -1.2,
-            28,
-          )
-          attackDrone.current.position.z -= fixedDelta * 5.6
-          attackDrone.current.rotation.z = THREE.MathUtils.lerp(
-            attackDrone.current.rotation.z,
-            -horizontal * 0.3,
-            0.1,
-          )
-          attackDrone.current.rotation.x = THREE.MathUtils.lerp(
-            attackDrone.current.rotation.x,
-            vertical * 0.16,
-            0.1,
-          )
-        }
-      } else {
-        formation.current.position.x = THREE.MathUtils.clamp(
-          formation.current.position.x + horizontal * fixedDelta * 10,
-          -18,
-          18,
-        )
-        formation.current.position.y = THREE.MathUtils.clamp(
-          formation.current.position.y + vertical * fixedDelta * 10,
-          0.5,
-          28,
-        )
-      }
+      formation.current.position.x = THREE.MathUtils.clamp(
+        formation.current.position.x + horizontal * fixedDelta * 10,
+        -32,
+        32,
+      )
+      formation.current.position.y = THREE.MathUtils.clamp(
+        formation.current.position.y + vertical * fixedDelta * 10,
+        0.5,
+        28,
+      )
       formation.current.position.z -= fixedDelta * 3.05
       formation.current.rotation.z = THREE.MathUtils.lerp(
         formation.current.rotation.z,
@@ -729,9 +1032,10 @@ function Simulation({
         explodeDrone(formation.current.position.clone())
       }
 
-      if (damageCooldown.current === 0 && !attackModeRef.current) {
+      if (damageCooldown.current === 0) {
         const collision = droneOffsets
           .slice(0, survivors)
+          .filter((_, slot) => !refillingSlots.has(slot))
           .map(
             (offset) =>
               new THREE.Vector3(
@@ -740,44 +1044,33 @@ function Simulation({
                 formation.current!.position.z + offset[2],
               ),
           )
-          .find((position) => collidesWithBuilding(position))
+          .find((position) => collidesWithBuilding(position, buildings))
         if (collision) {
           damageCooldown.current = 3
           explodeDrone(collision)
         }
       }
 
-      if (attackModeRef.current && attackDrone.current) {
-        const attackPosition = attackDrone.current.position
-        const stationHit = stationData.findIndex(
-          (station, index) =>
-            !destroyedStations.has(index) &&
-            attackPosition.distanceTo(
+      if (lidHitCooldown.current === 0) {
+        const fleetPositions = droneOffsets
+          .slice(0, survivors)
+          .filter((_, slot) => !refillingSlots.has(slot))
+          .map(
+            (offset) =>
               new THREE.Vector3(
-                station.position[0],
-                station.position[1] + 1.5,
-                station.position[2],
+                formation.current!.position.x + offset[0],
+                formation.current!.position.y + offset[1],
+                formation.current!.position.z + offset[2],
               ),
-            ) < 4.2,
+          )
+        const hit = fleetPositions.find((dronePosition) =>
+          Array.from(lidPositions.current.values()).some(
+            (lidPosition) => dronePosition.distanceTo(lidPosition) < 4.6,
+          ),
         )
-        if (
-          stationHit >= 0 ||
-          collidesWithBuilding(attackPosition, 0.8) ||
-          attackPosition.y < -0.8
-        ) {
-          if (stationHit >= 0) {
-            const nextDestroyed = new Set(destroyedStations).add(stationHit)
-            setDestroyedStations(nextDestroyed)
-            onStations(nextDestroyed.size, stationData.length)
-            addScore('airDefense')
-            addImpactExplosion(attackPosition)
-            replenishFleet()
-          } else {
-            explodeDrone(attackPosition.clone())
-          }
-          attackModeRef.current = false
-          setAttackMode(false)
-          onAttackMode(false)
+        if (hit) {
+          lidHitCooldown.current = 2
+          explodeDrone(hit)
         }
       }
 
@@ -793,31 +1086,27 @@ function Simulation({
       onAltitude(
         Math.round(
           80 +
-            (attackMode && attackDrone.current
-              ? attackDrone.current.position.y
-              : formation.current.position.y) *
-              24,
+            formation.current.position.y * 24,
         ),
       )
     }
-    const cameraTarget =
-      attackMode && attackDrone.current ? attackDrone.current : formation.current
+    const formationPosition = formation.current.position
     const desiredCamera = new THREE.Vector3(
-      cameraTarget.position.x * 0.35,
-      cameraTarget.position.y + 5.5,
-      cameraTarget.position.z + 15,
+      formationPosition.x * 0.35,
+      formationPosition.y + 5.5,
+      formationPosition.z + 15,
     )
     camera.position.lerp(desiredCamera, 0.055)
     camera.lookAt(
-      cameraTarget.position.x * 0.45,
-      cameraTarget.position.y,
-      cameraTarget.position.z - 14,
+      formationPosition.x * 0.45,
+      formationPosition.y,
+      formationPosition.z - 14,
     )
   })
 
   return (
     <>
-      <City />
+      <City buildings={buildings} />
       <group ref={formation} position={[0, 5, 8]}>
         {droneOffsets.map((offset, index) => (
           <Drone
@@ -825,22 +1114,41 @@ function Simulation({
             offset={offset}
             active={
               index < survivors &&
-              !(attackMode && index === Math.max(0, survivors - 1))
+              !refillingSlots.has(index)
             }
           />
         ))}
       </group>
-      {attackMode && (
-        <group ref={attackDrone} position={attackStart}>
-          <Drone offset={[0, 0, 0]} active />
-        </group>
-      )}
+      {attacks.map((flight) => (
+        <AttackFlight
+          key={flight.id}
+          flight={flight}
+          station={stations[flight.targetIndex]}
+          paused={paused}
+          lidPositions={lidPositions}
+          onStrike={completeAttack}
+          onDestroyed={destroyAttack}
+        />
+      ))}
+      {replacements.map((flight) => (
+        <ReplacementFlight
+          key={flight.id}
+          flight={flight}
+          formation={formation}
+          paused={paused}
+          lidPositions={lidPositions}
+          onJoined={joinReplacement}
+          onDestroyed={destroyReplacement}
+        />
+      ))}
       <Missiles
-        target={attackMode ? attackDrone : formation}
+        target={formation}
         active={!paused}
         intensity={route.defenseIntensity}
         destroyedStations={destroyedStations}
         destroyedTanks={explodedTanks}
+        buildings={buildings}
+        stations={stations}
         onImpact={(impact) => {
           addImpactExplosion(impact.position)
           if (impact.kind === 'tank') {
@@ -854,18 +1162,28 @@ function Simulation({
           }
         }}
       />
-      {stationData.map((station, index) => (
+      {stations.map((station, index) => (
         <AirDefenseStation
           key={index}
           position={station.position}
           destroyed={destroyedStations.has(index)}
+          targeted={attacks.some((attack) => attack.targetIndex === index)}
+          onSelect={() => launchAtStation(index)}
         />
       ))}
       {tankData.map((tank, index) => (
         <OilTank
           key={index}
+          index={index}
           position={tank.position}
           exploded={explodedTanks.has(index)}
+          onLidPosition={(lidIndex, position) => {
+            if (position) {
+              lidPositions.current.set(lidIndex, position)
+            } else {
+              lidPositions.current.delete(lidIndex)
+            }
+          }}
         />
       ))}
       {explodedTanks.size > 0 && (
@@ -898,11 +1216,12 @@ export function GameWorld(props: GameWorldProps) {
       <color attach="background" args={['#78868b']} />
       <fog attach="fog" args={['#78868b', 34, 150]} />
       <Sky sunPosition={[18, 8, -30]} turbidity={8} rayleigh={2.2} />
-      <ambientLight intensity={0.85} />
+      <hemisphereLight args={['#f3fbfa', '#798178', 1.75]} />
+      <ambientLight intensity={1.4} />
       <directionalLight
         castShadow
         position={[-25, 38, 18]}
-        intensity={2.4}
+        intensity={2.8}
         color="#ffe0b5"
         shadow-mapSize={[1024, 1024]}
       />

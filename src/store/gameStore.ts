@@ -24,7 +24,7 @@ type GameState = {
   score: number
   bestScore: number
   survivors: number
-  attackRequest: number
+  runSeed: number
   paused: boolean
   runWon: boolean
   settingsOpen: boolean
@@ -32,7 +32,6 @@ type GameState = {
   advance: () => void
   selectRoute: (route: RouteId) => void
   startRun: () => void
-  requestAttack: () => void
   addScore: (event: ScoreEvent) => void
   loseDrone: () => number
   replenishFleet: () => void
@@ -59,7 +58,7 @@ export const useGameStore = create<GameState>()(
       score: 0,
       bestScore: 0,
       survivors: 4,
-      attackRequest: 0,
+      runSeed: 1,
       paused: false,
       runWon: false,
       settingsOpen: false,
@@ -78,12 +77,10 @@ export const useGameStore = create<GameState>()(
           phase: 'flyover',
           score: 0,
           survivors: 4,
-          attackRequest: 0,
+          runSeed: Date.now(),
           paused: false,
           runWon: false,
         }),
-      requestAttack: () =>
-        set((state) => ({ attackRequest: state.attackRequest + 1 })),
       addScore: (event) => {
         const route = get().route
         if (!route) return
@@ -127,7 +124,7 @@ export const useGameStore = create<GameState>()(
           route: null,
           score: 0,
           survivors: 4,
-          attackRequest: 0,
+          runSeed: 1,
           paused: false,
           runWon: false,
         }),

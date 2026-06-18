@@ -1,4 +1,4 @@
-export type InputAction = 'left' | 'right' | 'up' | 'down' | 'attack' | 'pause'
+export type InputAction = 'left' | 'right' | 'up' | 'down' | 'pause'
 
 export type KeyBindings = Record<InputAction, string>
 
@@ -7,7 +7,6 @@ export const DEFAULT_BINDINGS: KeyBindings = {
   right: 'KeyD',
   up: 'KeyW',
   down: 'KeyS',
-  attack: 'Space',
   pause: 'Escape',
 }
 

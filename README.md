@@ -10,9 +10,11 @@ npm install
 npm run dev
 ```
 
-Use WASD or a gamepad left stick to steer the formation. Press Space or gamepad
-A to detach one drone for an attack run; the remaining drones continue on
-autopilot. A successful strike on a rooftop air-defense station replenishes the
+Use WASD or a gamepad left stick to steer the formation. Click a rooftop
+air-defense station to detach one drone; it automatically accelerates to the
+selected target while the player continues guiding the fleet. The camera always
+stays locked to the fleet and does not follow the attack drone.
+A successful strike on a rooftop air-defense station replenishes the
 formation. Ukraine is the only enabled launch corridor in the first phase, and
 the aircraft use an FP-1-inspired fixed-wing silhouette. Press Escape to pause.
 The looping soundtrack begins on the operator screen. The run lasts 72 seconds;

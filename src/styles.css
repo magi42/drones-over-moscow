@@ -214,6 +214,7 @@ h1, h2 {
 .attack-status strong { font-size:9px; font-weight:500; }
 .attack-status.active { border-color:#ff6a2b; background:rgba(64,18,7,.62); box-shadow:0 0 25px rgba(255,70,20,.15); }
 .attack-status.active span { color:#ff8a4f; }
+.flyover-screen.attack-active { cursor:crosshair; }
 .formation-status { position:absolute; left:32px; bottom:80px; padding:12px 15px; background:rgba(5,10,8,.52); border-left:2px solid var(--acid); }
 .formation-status p { font-size:8px; letter-spacing:.15em; margin-bottom:8px; }
 .formation-status strong { font-size:9px; }
