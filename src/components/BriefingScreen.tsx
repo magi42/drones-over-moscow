@@ -43,7 +43,7 @@ export function BriefingScreen() {
             <div><dt>Score factor</dt><dd>×{route.scoreMultiplier.toFixed(2)}</dd></div>
           </dl>
           <div className="control-hint">
-            <span>WASD</span> GUIDE FLEET <span>CLICK</span> ATTACK STATION <span>ESC</span> PAUSE
+            <span>WASD</span> GUIDE FLEET <span>CLICK</span> ATTACK TARGET <span>ESC</span> PAUSE
           </div>
           <button className="primary-button launch-button" onClick={startRun}>
             LAUNCH FORMATION <span>↗</span>

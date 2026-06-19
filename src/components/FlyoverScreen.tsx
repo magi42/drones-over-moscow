@@ -66,7 +66,7 @@ export function FlyoverScreen() {
       <Canvas
         shadows
         dpr={[1, 1.65]}
-        camera={{ position: [0, 7, 16], fov: 58, near: 0.1, far: 360 }}
+        camera={{ position: [0, 7, 16], fov: 58, near: 0.1, far: 520 }}
         gl={{ antialias: true, powerPreference: 'high-performance' }}
       >
         <Suspense fallback={null}>
@@ -93,7 +93,7 @@ export function FlyoverScreen() {
         <strong>
           {attackMode
             ? 'DRONE INTERCEPT IN PROGRESS'
-            : `${stations.destroyed}/${stations.total} DESTROYED · CLICK A STATION`}
+            : `${stations.destroyed}/${stations.total} DEFENSES DESTROYED · CLICK A TARGET`}
         </strong>
       </div>
       <div className="formation-status">
@@ -112,7 +112,7 @@ export function FlyoverScreen() {
       </div>
       <div className="control-strip">
         <span>WASD / LEFT STICK</span> FORMATION CONTROL ·{' '}
-        <span>MOUSE CLICK</span> SELECT AIR-DEFENSE TARGET
+        <span>MOUSE CLICK</span> ATTACK STATION OR OIL TANK
       </div>
       {paused && (
         <div className="pause-overlay">

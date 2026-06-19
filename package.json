@@ -9,7 +9,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "clean": "rm -rf dist release drones-over-moscow.tar.gz",
+    "release:dir": "rm -rf release && mkdir -p release/drones-over-moscow && cp -r index.html dist release/drones-over-moscow/",
+    "release": "npm run clean && npm run build && npm run release:dir",
+    "package": "npm run release && tar -C release -czf drones-over-moscow.tar.gz drones-over-moscow"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",

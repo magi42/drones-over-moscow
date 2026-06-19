@@ -52,37 +52,85 @@ type StationData = {
   position: [number, number, number]
 }
 
-function createBuildings(seed: number): BuildingData[] {
+type TankData = {
+  position: [number, number, number]
+}
+
+type CityLayout = {
+  buildings: BuildingData[]
+  tanks: TankData[]
+  stations: StationData[]
+  crossRoads: number[]
+}
+
+type BuildingDamage = Map<number, number>
+
+const BUILDING_COLLAPSE_SECONDS = 10
+
+function buildingDamageProgress(
+  buildingIndex: number,
+  damage: BuildingDamage,
+  now: number,
+) {
+  const hitAt = damage.get(buildingIndex)
+  if (hitAt === undefined) return 0
+  return THREE.MathUtils.clamp(
+    (now - hitAt) / BUILDING_COLLAPSE_SECONDS,
+    0,
+    1,
+  )
+}
+
+function buildingCollapseDrop(
+  buildingIndex: number,
+  buildings: BuildingData[],
+  damage: BuildingDamage,
+  now: number,
+) {
+  return (
+    buildings[buildingIndex].scale[1] *
+    (2 / 3) *
+    buildingDamageProgress(buildingIndex, damage, now)
+  )
+}
+
+function createCityLayout(seed: number): CityLayout {
   const random = mulberry32(seed)
-  return Array.from({ length: 52 }, (_, index) => {
-    const side = index % 2 === 0 ? -1 : 1
-    const row = Math.floor(index / 2)
+  const columns = [-72, -48, -24, 0, 24, 48, 72]
+  const cells = Array.from({ length: 28 }, (_, row) =>
+    columns.map((x, column) => ({
+      x,
+      z: 8 - row * 15,
+      row,
+      column,
+      sort: random(),
+    })),
+  ).flat()
+  const availableCells = [...cells].sort((a, b) => a.sort - b.sort)
+  const tankCells = availableCells.splice(0, 12)
+  const buildingCells = availableCells
+    .filter((cell) => cell.row >= 3)
+    .slice(0, 52)
+  const buildings = buildingCells.map((cell) => {
     const visibleHeight = 9 + random() * 17
     const scale: [number, number, number] = [13.4, visibleHeight, 9]
     return {
       position: [
-        side * (16 + random() * 28),
+        cell.x,
         -3 + visibleHeight / 2,
-        -row * 11 + random() * 5,
-      ],
+        cell.z,
+      ] as [number, number, number],
       scale,
       color: '#ffffff',
       apartmentBlock: true,
-      rotation: side > 0 ? Math.PI : 0,
+      rotation: random() > 0.5 ? Math.PI : 0,
     }
   })
-}
-
-const tankData = Array.from({ length: 12 }, (_, index) => ({
-  position: [
-    (index % 2 ? 1 : -1) * (12 + (index % 3) * 5),
-    1.5,
-    -35 - index * 15,
-  ] as [number, number, number],
-}))
-
-function createStations(buildings: BuildingData[]): StationData[] {
-  return [7, 17, 29, 39].map((buildingIndex) => {
+  const tanks = tankCells.map((cell) => ({
+    position: [cell.x, 1.5, cell.z] as [number, number, number],
+  }))
+  const stationIndices = [7, 17, 29, 39]
+  const stations = stationIndices.map((buildingIndex) => {
     const building = buildings[buildingIndex]
     return {
       buildingIndex,
@@ -90,25 +138,65 @@ function createStations(buildings: BuildingData[]): StationData[] {
         building.position[0],
         building.position[1] + building.scale[1] / 2 + 0.42,
         building.position[2],
-      ],
+      ] as [number, number, number],
     }
   })
+  const crossRoads: number[] = []
+  let roadRow = 1 + Math.floor(random() * 3)
+  while (roadRow < 28) {
+    crossRoads.push(8 - roadRow * 15 + 7.5)
+    roadRow += 1 + Math.floor(random() * 3)
+  }
+
+  return { buildings, tanks, stations, crossRoads }
 }
 
 export function collidesWithBuilding(
   position: THREE.Vector3,
   buildings: BuildingData[],
+  damagedBuildings: BuildingDamage = new Map(),
+  now = 0,
   radius = 1.1,
 ) {
-  return buildings.some((building) => {
+  return findBuildingCollision(
+    position,
+    buildings,
+    damagedBuildings,
+    now,
+    radius,
+  ) !== null
+}
+
+function findBuildingCollision(
+  position: THREE.Vector3,
+  buildings: BuildingData[],
+  damagedBuildings: BuildingDamage,
+  now: number,
+  radius = 1.1,
+  excludedIndex: number | null = null,
+) {
+  const index = buildings.findIndex((building, buildingIndex) => {
+    if (buildingIndex === excludedIndex) return false
     const [x, y, z] = building.position
-    const [width, height, depth] = building.scale
+    const [width, originalHeight, depth] = building.scale
+    const progress = buildingDamageProgress(
+      buildingIndex,
+      damagedBuildings,
+      now,
+    )
+    const height = THREE.MathUtils.lerp(
+      originalHeight,
+      originalHeight / 3,
+      progress,
+    )
+    const centerY = THREE.MathUtils.lerp(y, -3 + height / 2, progress)
     return (
       Math.abs(position.x - x) <= width / 2 + radius &&
-      Math.abs(position.y - y) <= height / 2 + radius &&
+      Math.abs(position.y - centerY) <= height / 2 + radius &&
       Math.abs(position.z - z) <= depth / 2 + radius
     )
   })
+  return index >= 0 ? index : null
 }
 
 function useFlightInput() {
@@ -194,10 +282,26 @@ function Drone({
   )
 }
 
-function ApartmentBlock({ building }: { building: BuildingData }) {
+function ApartmentBlock({
+  building,
+  hitAt,
+}: {
+  building: BuildingData
+  hitAt: number | undefined
+}) {
   const { scene } = useGLTF(apartmentBlockUrl)
+  const group = useRef<THREE.Group>(null)
+  const materials = useRef<
+    {
+      material: THREE.MeshStandardMaterial
+      baseColor: THREE.Color
+      baseEmissive: THREE.Color
+      baseEmissiveIntensity: number
+    }[]
+  >([])
   const model = useMemo(() => {
     const clone = scene.clone(true)
+    materials.current = []
     clone.traverse((object: THREE.Object3D) => {
       if (object instanceof THREE.Mesh) {
         object.castShadow = true
@@ -212,6 +316,12 @@ function ApartmentBlock({ building }: { building: BuildingData }) {
             material.emissive.set('#69746d')
             material.emissiveIntensity = 0.38
             material.roughness = Math.min(material.roughness, 0.76)
+            materials.current.push({
+              material,
+              baseColor: material.color.clone(),
+              baseEmissive: material.emissive.clone(),
+              baseEmissiveIntensity: material.emissiveIntensity,
+            })
           }
           return material
         })
@@ -226,34 +336,100 @@ function ApartmentBlock({ building }: { building: BuildingData }) {
   const fullModelHeight = 48.83 * modelScale
   const roofHeight = building.position[1] + building.scale[1] / 2
 
+  useFrame(() => {
+    const progress =
+      hitAt === undefined
+        ? 0
+        : THREE.MathUtils.clamp(
+            (performance.now() / 1000 - hitAt) / BUILDING_COLLAPSE_SECONDS,
+            0,
+            1,
+          )
+    if (group.current) {
+      group.current.position.y =
+        roofHeight -
+        fullModelHeight -
+        building.scale[1] * (2 / 3) * progress
+      group.current.scale.y = modelScale
+    }
+    materials.current.forEach((entry) => {
+      entry.material.color.copy(entry.baseColor).lerp(
+        new THREE.Color('#080908'),
+        progress * 0.88,
+      )
+      entry.material.emissive.copy(entry.baseEmissive).lerp(
+        new THREE.Color('#020202'),
+        progress,
+      )
+      entry.material.emissiveIntensity = THREE.MathUtils.lerp(
+        entry.baseEmissiveIntensity,
+        0.05,
+        progress,
+      )
+    })
+  })
+
   return (
-    <primitive
-      object={model}
+    <group
+      ref={group}
       position={[
         building.position[0],
         roofHeight - fullModelHeight,
         building.position[2],
       ]}
       rotation={[0, building.rotation, 0]}
-      scale={modelScale}
-    />
+      scale={[modelScale, modelScale, modelScale]}
+    >
+      <primitive object={model} />
+    </group>
   )
 }
 
 useGLTF.preload(apartmentBlockUrl)
 
+const curvedRoofTemplates = new WeakMap<THREE.Object3D, THREE.Object3D>()
+
+function curvedRoofTemplate(scene: THREE.Object3D) {
+  const cached = curvedRoofTemplates.get(scene)
+  if (cached) return cached
+
+  const template = scene.clone(true)
+  const radius = 4
+  const curvature = 0.2
+  const domeHeight = radius * curvature
+
+  template.traverse((object: THREE.Object3D) => {
+    if (!(object instanceof THREE.Mesh)) return
+    const geometry = object.geometry.clone()
+    const positions = geometry.getAttribute('position') as THREE.BufferAttribute
+    for (let vertex = 0; vertex < positions.count; vertex += 1) {
+      const x = positions.getX(vertex)
+      const y = positions.getY(vertex)
+      const normalizedRadiusSquared = (x * x + y * y) / (radius * radius)
+      if (normalizedRadiusSquared < 1) {
+        const ellipsoidHeight =
+          domeHeight * Math.sqrt(1 - normalizedRadiusSquared)
+        positions.setZ(vertex, positions.getZ(vertex) + ellipsoidHeight)
+      }
+    }
+    positions.needsUpdate = true
+    geometry.computeVertexNormals()
+    geometry.computeBoundingBox()
+    geometry.computeBoundingSphere()
+    object.geometry = geometry
+    object.castShadow = true
+    object.receiveShadow = true
+  })
+  curvedRoofTemplates.set(scene, template)
+  return template
+}
+
 function OilTankRoofModel() {
   const { scene } = useGLTF(oilTankRoofUrl)
-  const model = useMemo(() => {
-    const clone = scene.clone(true)
-    clone.traverse((object: THREE.Object3D) => {
-      if (object instanceof THREE.Mesh) {
-        object.castShadow = true
-        object.receiveShadow = true
-      }
-    })
-    return clone
-  }, [scene])
+  const model = useMemo(
+    () => curvedRoofTemplate(scene).clone(true),
+    [scene],
+  )
 
   return (
     <primitive
@@ -266,28 +442,45 @@ function OilTankRoofModel() {
 
 useGLTF.preload(oilTankRoofUrl)
 
-function City({ buildings: buildingData }: { buildings: BuildingData[] }) {
+function City({
+  buildings: buildingData,
+  damagedBuildings,
+  crossRoads,
+}: {
+  buildings: BuildingData[]
+  damagedBuildings: BuildingDamage
+  crossRoads: number[]
+}) {
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, -85]} receiveShadow>
-        <planeGeometry args={[150, 260]} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, -190]} receiveShadow>
+        <planeGeometry args={[340, 470]} />
         <meshStandardMaterial color="#202622" roughness={1} />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.94, -85]}>
-        <planeGeometry args={[12, 260]} />
-        <meshStandardMaterial color="#171a19" roughness={0.9} />
-      </mesh>
+      {crossRoads.map((z, index) => (
+        <group key={index}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.94, z]}>
+            <planeGeometry args={[330, 6]} />
+            <meshStandardMaterial color="#171a19" roughness={0.9} />
+          </mesh>
+          {Array.from({ length: 20 }, (_, marker) => (
+            <mesh
+              key={marker}
+              position={[-152 + marker * 16, -2.88, z]}
+              rotation={[-Math.PI / 2, 0, 0]}
+            >
+              <planeGeometry args={[5, 0.14]} />
+              <meshBasicMaterial color="#d9b566" />
+            </mesh>
+          ))}
+        </group>
+      ))}
       {buildingData.map((building, index) => (
         <ApartmentBlock
           key={`${building.position.join('-')}-${index}`}
           building={building}
+          hitAt={damagedBuildings.get(index)}
         />
-      ))}
-      {Array.from({ length: 26 }, (_, index) => (
-        <mesh key={index} position={[0, -2.75, 10 - index * 10]}>
-          <boxGeometry args={[0.15, 0.05, 4]} />
-          <meshBasicMaterial color="#d9b566" />
-        </mesh>
       ))}
     </group>
   )
@@ -349,15 +542,32 @@ function OilTank({
   index,
   position,
   exploded,
+  targeted,
+  onSelect,
   onLidPosition,
 }: {
   index: number
   position: [number, number, number]
   exploded: boolean
+  targeted: boolean
+  onSelect: () => void
   onLidPosition: (index: number, position: THREE.Vector3 | null) => void
 }) {
   return (
-    <group position={position}>
+    <group
+      position={position}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (!exploded) onSelect()
+      }}
+      onPointerOver={(event) => {
+        event.stopPropagation()
+        if (!exploded) document.body.style.cursor = 'crosshair'
+      }}
+      onPointerOut={() => {
+        document.body.style.cursor = ''
+      }}
+    >
       <mesh castShadow receiveShadow>
         <cylinderGeometry args={[4.3, 4.3, 3.4, 20]} />
         <meshStandardMaterial
@@ -369,6 +579,15 @@ function OilTank({
       {!exploded && (
         <group position={[0, 1.93, 0]}>
           <OilTankRoofModel />
+          <mesh position={[0, 1.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[5, 5.35, 32]} />
+            <meshBasicMaterial
+              color={targeted ? '#ffcf45' : '#ff7b35'}
+              transparent
+              opacity={targeted ? 0.95 : 0.42}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
         </group>
       )}
       {exploded && (
@@ -448,19 +667,135 @@ function Explosion() {
   )
 }
 
+function PollutionCloud({
+  index,
+  position,
+  reducedEffects,
+}: {
+  index: number
+  position: [number, number, number]
+  reducedEffects: boolean
+}) {
+  const cloud = useRef<THREE.Group>(null)
+  const rain = useRef<THREE.InstancedMesh>(null)
+  const age = useRef(0)
+  const random = useMemo(() => mulberry32(17000 + index), [index])
+  const cloudBlobs = useMemo(
+    () =>
+      Array.from({ length: reducedEffects ? 7 : 14 }, () => ({
+        position: [
+          (random() - 0.5) * 17,
+          (random() - 0.5) * 4.5,
+          (random() - 0.5) * 13,
+        ] as [number, number, number],
+        scale: [
+          3.8 + random() * 4.8,
+          1.7 + random() * 2.6,
+          3.2 + random() * 4.4,
+        ] as [number, number, number],
+      })),
+    [random, reducedEffects],
+  )
+  const rainDrops = useMemo(
+    () =>
+      Array.from({ length: reducedEffects ? 28 : 80 }, () => ({
+        x: (random() - 0.5) * 18,
+        y: random() * 22,
+        z: (random() - 0.5) * 14,
+        speed: 8 + random() * 11,
+        length: 0.5 + random() * 1.2,
+      })),
+    [random, reducedEffects],
+  )
+
+  useFrame((_, delta) => {
+    age.current += delta
+    if (cloud.current) {
+      const growth = Math.min(1, age.current / 4)
+      cloud.current.scale.setScalar(0.15 + growth * 0.85)
+      cloud.current.position.x += delta * 0.38
+    }
+    if (!rain.current) return
+    const transform = new THREE.Object3D()
+    rainDrops.forEach((drop, dropIndex) => {
+      const y = 21 - ((age.current * drop.speed + drop.y) % 25)
+      transform.position.set(drop.x, y, drop.z)
+      transform.scale.set(1, drop.length, 1)
+      transform.updateMatrix()
+      rain.current!.setMatrixAt(dropIndex, transform.matrix)
+    })
+    rain.current.instanceMatrix.needsUpdate = true
+  })
+
+  return (
+    <group position={[position[0], 0, position[2]]}>
+      <group ref={cloud} position={[0, 23, 0]} scale={0.15}>
+        {cloudBlobs.map((blob, blobIndex) => (
+          <mesh key={blobIndex} position={blob.position} scale={blob.scale}>
+            <icosahedronGeometry args={[1, 2]} />
+            <meshStandardMaterial
+              color="#070907"
+              emissive="#020302"
+              emissiveIntensity={0.25}
+              roughness={1}
+              transparent
+              opacity={0.9}
+              depthWrite={false}
+            />
+          </mesh>
+        ))}
+      </group>
+      <instancedMesh
+        ref={rain}
+        args={[undefined, undefined, rainDrops.length]}
+        frustumCulled={false}
+      >
+        <cylinderGeometry args={[0.025, 0.045, 1, 4]} />
+        <meshBasicMaterial
+          color="#090b09"
+          transparent
+          opacity={0.78}
+          depthWrite={false}
+        />
+      </instancedMesh>
+    </group>
+  )
+}
+
 function AirDefenseStation({
   position,
+  buildingIndex,
+  buildings,
+  damagedBuildings,
   destroyed,
   targeted,
   onSelect,
 }: {
   position: [number, number, number]
+  buildingIndex: number
+  buildings: BuildingData[]
+  damagedBuildings: BuildingDamage
   destroyed: boolean
   targeted: boolean
   onSelect: () => void
 }) {
+  const group = useRef<THREE.Group>(null)
+
+  useFrame(() => {
+    if (!group.current) return
+    group.current.position.y =
+      position[1] -
+      buildingCollapseDrop(
+        buildingIndex,
+        buildings,
+        damagedBuildings,
+        performance.now() / 1000,
+      )
+  })
+
   return (
     <group
+      ref={group}
       position={position}
       onClick={(event) => {
         event.stopPropagation()
@@ -532,6 +867,8 @@ function Missiles({
   onImpact,
   buildings: buildingData,
   stations: stationData,
+  tanks: tankData,
+  damagedBuildings,
 }: {
   target: React.RefObject<THREE.Group | null>
   active: boolean
@@ -541,6 +878,8 @@ function Missiles({
   onImpact: (impact: MissileImpact) => void
   buildings: BuildingData[]
   stations: StationData[]
+  tanks: TankData[]
+  damagedBuildings: BuildingDamage
 }) {
   const meshRefs = useRef<(THREE.Group | null)[]>([])
   const random = useMemo(() => mulberry32(8128), [])
@@ -575,6 +914,12 @@ function Missiles({
         availableStations[
           Math.floor(random() * availableStations.length)
         ]
+      const stationDrop = buildingCollapseDrop(
+        station.buildingIndex,
+        buildingData,
+        damagedBuildings,
+        performance.now() / 1000,
+      )
       const targetZ = target.current.position.z
       const possibleImpacts: MissileImpact[] = [
         ...tankData
@@ -593,7 +938,17 @@ function Missiles({
           index: buildingIndex,
           position: {
             x: building.position[0],
-            y: building.position[1] + building.scale[1] / 2,
+            y:
+              building.position[1] +
+              THREE.MathUtils.lerp(
+                building.scale[1] / 2,
+                -building.scale[1] / 6,
+                buildingDamageProgress(
+                  buildingIndex,
+                  damagedBuildings,
+                  performance.now() / 1000,
+                ),
+              ),
             z: building.position[2],
           },
         })),
@@ -607,7 +962,7 @@ function Missiles({
         impactPool[Math.floor(random() * impactPool.length)]
       const start = {
         x: station.position[0],
-        y: station.position[1] + 3.6,
+        y: station.position[1] + 3.6 - stationDrop,
         z: station.position[2],
       }
       const distance = Math.hypot(
@@ -692,7 +1047,10 @@ type MissileImpact = {
 type AttackFlightData = {
   id: number
   slot: number
+  targetKind: 'station' | 'tank'
   targetIndex: number
+  targetPosition: [number, number, number]
+  targetBuildingIndex: number | null
   start: [number, number, number]
 }
 
@@ -704,17 +1062,25 @@ type ReplacementFlightData = {
 
 function AttackFlight({
   flight,
-  station,
   paused,
   lidPositions,
+  buildings,
+  damagedBuildings,
   onStrike,
+  onBuildingHit,
   onDestroyed,
 }: {
   flight: AttackFlightData
-  station: StationData
   paused: boolean
   lidPositions: React.RefObject<Map<number, THREE.Vector3>>
+  buildings: BuildingData[]
+  damagedBuildings: BuildingDamage
   onStrike: (flight: AttackFlightData, position: THREE.Vector3) => void
+  onBuildingHit: (
+    flight: AttackFlightData,
+    buildingIndex: number,
+    position: THREE.Vector3,
+  ) => void
   onDestroyed: (flight: AttackFlightData, position: THREE.Vector3) => void
 }) {
   const group = useRef<THREE.Group>(null)
@@ -724,11 +1090,15 @@ function AttackFlight({
   useFrame((_, delta) => {
     if (paused || complete.current || !group.current) return
     age.current += delta
-    const target = new THREE.Vector3(
-      station.position[0],
-      station.position[1] + 1.5,
-      station.position[2],
-    )
+    const target = new THREE.Vector3(...flight.targetPosition)
+    if (flight.targetBuildingIndex !== null) {
+      target.y -= buildingCollapseDrop(
+        flight.targetBuildingIndex,
+        buildings,
+        damagedBuildings,
+        performance.now() / 1000,
+      )
+    }
     const direction = target.clone().sub(group.current.position)
     const distance = direction.length()
     const speed = Math.min(30, 3.05 + age.current * 4.5)
@@ -737,6 +1107,20 @@ function AttackFlight({
     )
     group.current.lookAt(target)
     group.current.rotation.y += Math.PI
+
+    const buildingHit = findBuildingCollision(
+      group.current.position,
+      buildings,
+      damagedBuildings,
+      performance.now() / 1000,
+      0.8,
+      flight.targetBuildingIndex,
+    )
+    if (buildingHit !== null) {
+      complete.current = true
+      onBuildingHit(flight, buildingHit, group.current.position.clone())
+      return
+    }
 
     for (const lid of lidPositions.current.values()) {
       if (group.current.position.distanceTo(lid) < 4.6) {
@@ -830,8 +1214,8 @@ function Simulation({
   const replenishFleet = useGameStore((state) => state.replenishFleet)
   const finishRun = useGameStore((state) => state.finishRun)
   const reducedEffects = useGameStore((state) => state.settings.reducedEffects)
-  const buildings = useMemo(() => createBuildings(runSeed), [runSeed])
-  const stations = useMemo(() => createStations(buildings), [buildings])
+  const cityLayout = useMemo(() => createCityLayout(runSeed), [runSeed])
+  const { buildings, tanks, stations, crossRoads } = cityLayout
   const input = useFlightInput()
   const formation = useRef<THREE.Group>(null)
   const elapsed = useRef(0)
@@ -845,6 +1229,9 @@ function Simulation({
   const lidPositions = useRef<Map<number, THREE.Vector3>>(new Map())
   const lidHitCooldown = useRef(0)
   const [explodedTanks, setExplodedTanks] = useState<Set<number>>(new Set())
+  const [damagedBuildings, setDamagedBuildings] = useState<BuildingDamage>(
+    new Map(),
+  )
   const [destroyedStations, setDestroyedStations] = useState<Set<number>>(
     new Set(),
   )
@@ -881,14 +1268,24 @@ function Simulation({
     return remaining
   }
 
-  const launchAtStation = (stationIndex: number) => {
-    const targeted = attacks.some((attack) => attack.targetIndex === stationIndex)
+  const launchAtTarget = (
+    targetKind: AttackFlightData['targetKind'],
+    targetIndex: number,
+    targetPosition: [number, number, number],
+    targetBuildingIndex: number | null = null,
+  ) => {
+    const targeted = attacks.some(
+      (attack) =>
+        attack.targetKind === targetKind && attack.targetIndex === targetIndex,
+    )
     const availableSlot = droneOffsets.findIndex(
       (_, slot) => slot < survivors && !refillingSlots.has(slot),
     )
     if (
       paused ||
-      destroyedStations.has(stationIndex) ||
+      (targetKind === 'station'
+        ? destroyedStations.has(targetIndex)
+        : explodedTanks.has(targetIndex)) ||
       targeted ||
       availableSlot < 0 ||
       !formation.current
@@ -904,7 +1301,15 @@ function Simulation({
     ]
     setAttacks((current) => [
       ...current,
-      { id, slot: availableSlot, targetIndex: stationIndex, start },
+      {
+        id,
+        slot: availableSlot,
+        targetKind,
+        targetIndex,
+        targetPosition,
+        targetBuildingIndex,
+        start,
+      },
     ])
     setReplacements((current) => [
       ...current,
@@ -926,13 +1331,18 @@ function Simulation({
     position: THREE.Vector3,
   ) => {
     setAttacks((current) => current.filter((item) => item.id !== flight.id))
-    setDestroyedStations((current) => {
-      if (current.has(flight.targetIndex)) return current
-      const next = new Set(current).add(flight.targetIndex)
-      onStations(next.size, stations.length)
-      return next
-    })
-    addScore('airDefense')
+    if (flight.targetKind === 'station') {
+      setDestroyedStations((current) => {
+        if (current.has(flight.targetIndex)) return current
+        const next = new Set(current).add(flight.targetIndex)
+        onStations(next.size, stations.length)
+        return next
+      })
+      addScore('airDefense')
+    } else {
+      setExplodedTanks((current) => new Set(current).add(flight.targetIndex))
+      addScore('oilTank')
+    }
     addImpactExplosion(position)
     replenishFleet()
   }
@@ -942,6 +1352,25 @@ function Simulation({
     position: THREE.Vector3,
   ) => {
     setAttacks((current) => current.filter((item) => item.id !== flight.id))
+    addImpactExplosion(position)
+  }
+
+  const damageBuilding = (buildingIndex: number) => {
+    setDamagedBuildings((current) => {
+      if (current.has(buildingIndex)) return current
+      const next = new Map(current)
+      next.set(buildingIndex, performance.now() / 1000)
+      return next
+    })
+  }
+
+  const attackHitsBuilding = (
+    flight: AttackFlightData,
+    buildingIndex: number,
+    position: THREE.Vector3,
+  ) => {
+    setAttacks((current) => current.filter((item) => item.id !== flight.id))
+    damageBuilding(buildingIndex)
     addImpactExplosion(position)
   }
 
@@ -1037,17 +1466,28 @@ function Simulation({
           .slice(0, survivors)
           .filter((_, slot) => !refillingSlots.has(slot))
           .map(
-            (offset) =>
-              new THREE.Vector3(
+            (offset) => {
+              const position = new THREE.Vector3(
                 formation.current!.position.x + offset[0],
                 formation.current!.position.y + offset[1],
                 formation.current!.position.z + offset[2],
-              ),
+              )
+              return {
+                position,
+                buildingIndex: findBuildingCollision(
+                  position,
+                  buildings,
+                  damagedBuildings,
+                  performance.now() / 1000,
+                ),
+              }
+            },
           )
-          .find((position) => collidesWithBuilding(position, buildings))
-        if (collision) {
+          .find(({ buildingIndex }) => buildingIndex !== null)
+        if (collision && collision.buildingIndex !== null) {
           damageCooldown.current = 3
-          explodeDrone(collision)
+          damageBuilding(collision.buildingIndex)
+          explodeDrone(collision.position)
         }
       }
 
@@ -1106,7 +1546,11 @@ function Simulation({
 
   return (
     <>
-      <City buildings={buildings} />
+      <City
+        buildings={buildings}
+        damagedBuildings={damagedBuildings}
+        crossRoads={crossRoads}
+      />
       <group ref={formation} position={[0, 5, 8]}>
         {droneOffsets.map((offset, index) => (
           <Drone
@@ -1123,10 +1567,12 @@ function Simulation({
         <AttackFlight
           key={flight.id}
           flight={flight}
-          station={stations[flight.targetIndex]}
           paused={paused}
           lidPositions={lidPositions}
+          buildings={buildings}
+          damagedBuildings={damagedBuildings}
           onStrike={completeAttack}
+          onBuildingHit={attackHitsBuilding}
           onDestroyed={destroyAttack}
         />
       ))}
@@ -1149,16 +1595,17 @@ function Simulation({
         destroyedTanks={explodedTanks}
         buildings={buildings}
         stations={stations}
+        tanks={tanks}
+        damagedBuildings={damagedBuildings}
         onImpact={(impact) => {
           addImpactExplosion(impact.position)
           if (impact.kind === 'tank') {
             setExplodedTanks((current) => {
               if (current.has(impact.index)) return current
-              addScore('oilTank')
               return new Set(current).add(impact.index)
             })
           } else {
-            addScore('collateral')
+            damageBuilding(impact.index)
           }
         }}
       />
@@ -1166,17 +1613,40 @@ function Simulation({
         <AirDefenseStation
           key={index}
           position={station.position}
+          buildingIndex={station.buildingIndex}
+          buildings={buildings}
+          damagedBuildings={damagedBuildings}
           destroyed={destroyedStations.has(index)}
-          targeted={attacks.some((attack) => attack.targetIndex === index)}
-          onSelect={() => launchAtStation(index)}
+          targeted={attacks.some(
+            (attack) =>
+              attack.targetKind === 'station' && attack.targetIndex === index,
+          )}
+          onSelect={() =>
+            launchAtTarget('station', index, [
+              station.position[0],
+              station.position[1] + 1.5,
+              station.position[2],
+            ], station.buildingIndex)
+          }
         />
       ))}
-      {tankData.map((tank, index) => (
+      {tanks.map((tank, index) => (
         <OilTank
           key={index}
           index={index}
           position={tank.position}
           exploded={explodedTanks.has(index)}
+          targeted={attacks.some(
+            (attack) =>
+              attack.targetKind === 'tank' && attack.targetIndex === index,
+          )}
+          onSelect={() =>
+            launchAtTarget('tank', index, [
+              tank.position[0],
+              tank.position[1] + 1.5,
+              tank.position[2],
+            ])
+          }
           onLidPosition={(lidIndex, position) => {
             if (position) {
               lidPositions.current.set(lidIndex, position)
@@ -1184,6 +1654,14 @@ function Simulation({
               lidPositions.current.delete(lidIndex)
             }
           }}
+        />
+      ))}
+      {Array.from(explodedTanks).map((tankIndex) => (
+        <PollutionCloud
+          key={tankIndex}
+          index={tankIndex}
+          position={tanks[tankIndex].position}
+          reducedEffects={reducedEffects}
         />
       ))}
       {explodedTanks.size > 0 && (

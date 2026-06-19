@@ -3,6 +3,10 @@
 A stylized browser arcade vertical slice built with React, React Three Fiber,
 Three.js, Rapier, and Zustand.
 
+## Preview
+
+https://magi.fi/ohjelmointi/games/drones-over-moscow/
+
 ## Run locally
 
 ```bash
@@ -11,9 +15,10 @@ npm run dev
 ```
 
 Use WASD or a gamepad left stick to steer the formation. Click a rooftop
-air-defense station to detach one drone; it automatically accelerates to the
-selected target while the player continues guiding the fleet. The camera always
-stays locked to the fleet and does not follow the attack drone.
+air-defense station or oil tank to detach one drone; it automatically
+accelerates to the selected target while the player continues guiding the
+fleet. Striking an oil tank triggers its explosion and launches its roof. The
+camera always stays locked to the fleet and does not follow attack drones.
 A successful strike on a rooftop air-defense station replenishes the
 formation. Ukraine is the only enabled launch corridor in the first phase, and
 the aircraft use an FP-1-inspired fixed-wing silhouette. Press Escape to pause.
