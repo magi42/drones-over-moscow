@@ -79,6 +79,7 @@ h1, h2 {
 .target-ring::after { width: 1px; height: 280px; margin: -25px 0 0 114px; }
 .boot-title p, .boot-title small { font-size: 10px; letter-spacing: .16em; color: #819087; }
 .boot-title h1 { font-size: clamp(55px, 7vw, 96px); line-height: .8; margin: 25px 0 30px; }
+.boot-title h1 span { font-size: .52em; text-transform: none; color: var(--acid); }
 .boot-loader { width: 100%; height: 2px; background: #242b27; margin-bottom: 13px; }
 .boot-loader i { display: block; height: 100%; background: var(--acid); animation: load 2s ease-in-out forwards; }
 @keyframes load { from { width: 0; } to { width: 100%; } }
@@ -96,9 +97,29 @@ h1, h2 {
   grid-template-columns: 1fr 2.3fr 1fr;
   align-items: center;
   gap: 2vw;
-  padding: 8vh 5vw 28vh;
+  padding: 14vh 5vw 24vh;
 }
 .ceiling-light { position: absolute; width: 48%; height: 4px; background: #c8d6be; top: 4%; left: 26%; box-shadow: 0 25px 80px 22px rgba(191, 223, 183, .16); }
+.main-game-title {
+  position: absolute;
+  z-index: 2;
+  top: 6vh;
+  left: 50%;
+  width: min(760px, 70vw);
+  margin: 0;
+  transform: translateX(-50%);
+  color: #e7eee7;
+  font-size: clamp(42px, 5vw, 76px);
+  line-height: .8;
+  text-align: center;
+  text-shadow: 0 5px 28px #000;
+}
+.main-game-title b {
+  color: var(--acid);
+  font-size: .56em;
+  font-weight: 600;
+  text-transform: none;
+}
 .monitor {
   position: relative;
   padding: 10px;
@@ -218,9 +239,12 @@ h1, h2 {
 .formation-status { position:absolute; left:32px; bottom:80px; padding:12px 15px; background:rgba(5,10,8,.52); border-left:2px solid var(--acid); }
 .formation-status p { font-size:8px; letter-spacing:.15em; margin-bottom:8px; }
 .formation-status strong { font-size:9px; }
+.formation-status small { display:block; margin-top:5px; color:#9eaaa2; font-size:8px; letter-spacing:.08em; }
 .drone-pips { display:flex; gap:7px; margin-bottom:8px; }
 .drone-pips i { width:19px; height:8px; display:block; background:var(--acid); clip-path:polygon(50% 0,100% 100%,50% 68%,0 100%); }
+.drone-pips i.refilling { background:#858b86; opacity:.65; animation:refillPulse 1s ease-in-out infinite; }
 .drone-pips i.lost { background:#5b3330; opacity:.5; }
+@keyframes refillPulse { 50% { opacity:.25; } }
 .mission-progress { position:absolute; left:50%; bottom:28px; transform:translateX(-50%); display:flex; align-items:center; gap:12px; font-size:8px; text-shadow:0 2px 4px #000; }
 .mission-progress > div { width:300px; height:3px; background:rgba(255,255,255,.25); }
 .mission-progress i { height:100%; display:block; background:var(--acid); box-shadow:0 0 8px var(--acid); }

@@ -8,13 +8,17 @@ export function OperatorScreen() {
     <section className="screen operator-screen">
       <div className="operator-room">
         <div className="ceiling-light" />
+        <h1 className="main-game-title">
+          DRONES <b>over</b> MOSCOW
+        </h1>
         <div className="monitor monitor-left">
           <span>UPLINK / STABLE</span>
           <div className="radar-sweep"><i /></div>
         </div>
         <div className="monitor monitor-center">
           <div className="monitor-header">
-            <span>OPERATOR STATION 04</span><span>03:17:42 Z</span>
+            <span>OPERATOR STATION 04</span>
+            <span>03:17:42 Z</span>
           </div>
           <div className="operator-feed">
             <div className="operator-silhouette">
@@ -22,10 +26,10 @@ export function OperatorScreen() {
             </div>
             <div>
               <p className="eyebrow">IDENTITY CONFIRMED</p>
-              <h1>You are the operator.</h1>
+              <h1>Fire Point FP-1 operator.</h1>
               <p>
-                Four airframes await your guidance. Keep the formation intact.
-                Let their defenses do the rest.
+                Four Ukrainian Fire Point FP-1 drones await your guidance, with
+                twelve more in reserve. Keep the FP-1 formation intact.
               </p>
               <button className="primary-button" onClick={advance}>
                 ACCEPT MISSION <span>→</span>

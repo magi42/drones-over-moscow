@@ -19,9 +19,12 @@ air-defense station or oil tank to detach one drone; it automatically
 accelerates to the selected target while the player continues guiding the
 fleet. Striking an oil tank triggers its explosion and launches its roof. The
 camera always stays locked to the fleet and does not follow attack drones.
-A successful strike on a rooftop air-defense station replenishes the
-formation. Ukraine is the only enabled launch corridor in the first phase, and
-the aircraft use an FP-1-inspired fixed-wing silhouette. Press Escape to pause.
+The operation has 16 aircraft: four visible and twelve reserves. Every launch
+consumes one aircraft, and replacements arrive only while reserves remain.
+Every aircraft part can collide with buildings, tanks, stations, or airborne
+tank lids. Passing beneath a pollution cloud permanently blackens the affected
+drone. Ukraine is the only enabled launch corridor in the first phase, and the
+aircraft use an FP-1-inspired fixed-wing silhouette. Press Escape to pause.
 The looping soundtrack begins on the operator screen. The run lasts 72 seconds;
 crossing checkpoints and baiting defensive fire builds score.
 

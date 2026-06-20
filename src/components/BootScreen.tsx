@@ -16,7 +16,7 @@ export function BootScreen() {
         <span className="target-ring" />
         <div className="boot-title">
           <p>REMOTE AVIATION TERMINAL / 04</p>
-          <h1>DRONES<br />OVER MOSCOW</h1>
+          <h1>DRONES <span>over</span><br />MOSCOW</h1>
           <div className="boot-loader"><i /></div>
           <small>ESTABLISHING ENCRYPTED UPLINK</small>
         </div>

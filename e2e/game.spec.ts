@@ -7,7 +7,7 @@ test('operator can select a route, launch, and reach results', async ({ page }) 
   await expect(page.getByRole('button', { name: /estonia pine needle/i })).toBeDisabled()
   await page.getByRole('button', { name: /ukraine sunflower/i }).click()
   await expect(page.getByRole('heading', { name: 'Ukraine' })).toBeVisible()
-  await page.getByRole('button', { name: /launch formation/i }).click()
+  await page.getByRole('button', { name: /launch.*formation/i }).click()
   await expect(page.getByText(/formation control/i)).toBeVisible({
     timeout: 15_000,
   })

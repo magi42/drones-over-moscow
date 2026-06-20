@@ -9,15 +9,15 @@ export function ResultsScreen() {
     <section className="screen results-screen">
       <div className="result-glow" />
       <div className="results-card">
-        <p className="eyebrow">{runWon ? 'SIGNAL RECOVERED' : 'SIGNAL LOST'}</p>
-        <h1>{runWon ? 'Formation extracted' : 'Mission interrupted'}</h1>
+        <p className="eyebrow">{runWon ? 'FP-1 FLEET RECOVERED' : 'FP-1 FLEET LOST'}</p>
+        <h1>{runWon ? 'FP-1 formation extracted' : 'Mission interrupted'}</h1>
         <p className="result-route">{routeName} corridor / Moscow flyover</p>
         <div className="score-display">
           <small>FINAL SCORE</small>
           <strong>{score.toLocaleString()}</strong>
         </div>
         <div className="result-stats">
-          <div><strong>{survivors}/4</strong><span>Drones recovered</span></div>
+          <div><strong>{survivors}/4</strong><span>FP-1 drones recovered</span></div>
           <div><strong>{bestScore.toLocaleString()}</strong><span>Personal best</span></div>
         </div>
         <button className="primary-button" onClick={restart}>RETURN TO CONSOLE</button>

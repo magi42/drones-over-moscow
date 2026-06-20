@@ -24,6 +24,8 @@ type GameState = {
   score: number
   bestScore: number
   survivors: number
+  totalDrones: number
+  launchesRemaining: number
   runSeed: number
   paused: boolean
   runWon: boolean
@@ -33,8 +35,12 @@ type GameState = {
   selectRoute: (route: RouteId) => void
   startRun: () => void
   addScore: (event: ScoreEvent) => void
-  loseDrone: () => number
-  replenishFleet: () => void
+  launchDrone: () => {
+    accepted: boolean
+    replacementAvailable: boolean
+    remaining: number
+  }
+  loseControlledDrone: () => number
   finishRun: (won: boolean) => void
   togglePause: () => void
   setSettingsOpen: (open: boolean) => void
@@ -58,6 +64,8 @@ export const useGameStore = create<GameState>()(
       score: 0,
       bestScore: 0,
       survivors: 4,
+      totalDrones: 16,
+      launchesRemaining: 16,
       runSeed: 1,
       paused: false,
       runWon: false,
@@ -77,6 +85,8 @@ export const useGameStore = create<GameState>()(
           phase: 'flyover',
           score: 0,
           survivors: 4,
+          totalDrones: 16,
+          launchesRemaining: 16,
           runSeed: Date.now(),
           paused: false,
           runWon: false,
@@ -86,12 +96,32 @@ export const useGameStore = create<GameState>()(
         if (!route) return
         set((state) => ({ score: state.score + scoreEvent(event, route) }))
       },
-      loseDrone: () => {
+      launchDrone: () => {
+        const state = get()
+        if (state.launchesRemaining <= 0) {
+          return {
+            accepted: false,
+            replacementAvailable: false,
+            remaining: 0,
+          }
+        }
+        const replacementAvailable = state.launchesRemaining > 4
+        const remaining = state.launchesRemaining - 1
+        set({
+          launchesRemaining: remaining,
+          totalDrones: remaining,
+          survivors: replacementAvailable
+            ? state.survivors
+            : Math.max(0, state.survivors - 1),
+        })
+        return { accepted: true, replacementAvailable, remaining }
+      },
+      loseControlledDrone: () => {
         const survivors = Math.max(0, get().survivors - 1)
-        set({ survivors })
+        const totalDrones = Math.max(0, get().totalDrones - 1)
+        set({ survivors, totalDrones })
         return survivors
       },
-      replenishFleet: () => set({ survivors: 4 }),
       finishRun: (won) => {
         const state = get()
         const finalScore =
@@ -124,6 +154,8 @@ export const useGameStore = create<GameState>()(
           route: null,
           score: 0,
           survivors: 4,
+          totalDrones: 16,
+          launchesRemaining: 16,
           runSeed: 1,
           paused: false,
           runWon: false,

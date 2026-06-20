@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber'
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import { ROUTES } from '../game/config'
 import { useGameStore } from '../store/gameStore'
 import { GameWorld } from '../scene/GameWorld'
@@ -43,14 +43,29 @@ export function FlyoverScreen() {
   const [altitude, setAltitude] = useState(200)
   const [attackMode, setAttackMode] = useState(false)
   const [stations, setStations] = useState({ destroyed: 0, total: 4 })
+  const [fleetSlots, setFleetSlots] = useState<
+    Array<'ready' | 'refilling' | 'lost'>
+  >(['ready', 'ready', 'ready', 'ready'])
+  const [queuedAttacks, setQueuedAttacks] = useState(0)
   const routeId = useGameStore((state) => state.route)!
   const route = ROUTES[routeId]
   const score = useGameStore((state) => state.score)
   const survivors = useGameStore((state) => state.survivors)
+  const launchesRemaining = useGameStore((state) => state.launchesRemaining)
   const paused = useGameStore((state) => state.paused)
   const togglePause = useGameStore((state) => state.togglePause)
   const setSettingsOpen = useGameStore((state) => state.setSettingsOpen)
   const bindings = useGameStore((state) => state.settings.bindings)
+  const updateFleetSlots = useCallback(
+    (
+      slots: Array<'ready' | 'refilling' | 'lost'>,
+      queued: number,
+    ) => {
+      setFleetSlots(slots)
+      setQueuedAttacks(queued)
+    },
+    [],
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -75,6 +90,7 @@ export function FlyoverScreen() {
             onAltitude={setAltitude}
             onAttackMode={setAttackMode}
             onStations={(destroyed, total) => setStations({ destroyed, total })}
+            onFleetSlots={updateFleetSlots}
           />
         </Suspense>
       </Canvas>
@@ -97,13 +113,15 @@ export function FlyoverScreen() {
         </strong>
       </div>
       <div className="formation-status">
-        <p>FORMATION</p>
+        <p>FIRE POINT FP-1 FLEET</p>
         <div className="drone-pips">
-          {[0, 1, 2, 3].map((drone) => (
-            <i key={drone} className={drone < survivors ? 'alive' : 'lost'} />
+          {fleetSlots.map((slot, index) => (
+            <i key={index} className={slot} title={slot} />
           ))}
         </div>
-        <strong>{survivors}/4 SIGNALS</strong>
+        <strong>{survivors}/4 FP-1 DRONES</strong>
+        <small>{launchesRemaining} FP-1 LAUNCHES AVAILABLE</small>
+        {queuedAttacks > 0 && <small>{queuedAttacks} ATTACKS QUEUED</small>}
       </div>
       <div className="mission-progress">
         <span>ENTRY</span>

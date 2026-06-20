@@ -29,13 +29,13 @@ export function BriefingScreen() {
             <i className="body" />
             {[0, 1, 2, 3].map((n) => <b key={n} className={`rotor rotor-${n}`} />)}
           </div>
-          <span className="measure measure-a">4 AIRFRAMES</span>
-          <span className="measure measure-b">AUTONOMOUS FOLLOW</span>
+          <span className="measure measure-a">4 FIRE POINT FP-1 DRONES</span>
+          <span className="measure measure-b">12 FP-1 RESERVES</span>
         </div>
         <div className="briefing-copy">
           <p className="eyebrow">LAUNCH ORIGIN</p>
           <h1>{route.name}</h1>
-          <p>{route.briefing}</p>
+          <p>Fire Point FP-1 formation. {route.briefing}</p>
           <dl>
             <div><dt>Weather</dt><dd>{route.weather}</dd></div>
             <div><dt>Formation</dt><dd>{route.formation}</dd></div>
@@ -46,7 +46,7 @@ export function BriefingScreen() {
             <span>WASD</span> GUIDE FLEET <span>CLICK</span> ATTACK TARGET <span>ESC</span> PAUSE
           </div>
           <button className="primary-button launch-button" onClick={startRun}>
-            LAUNCH FORMATION <span>↗</span>
+            LAUNCH FP-1 FORMATION <span>↗</span>
           </button>
         </div>
       </div>
