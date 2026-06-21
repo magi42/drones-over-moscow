@@ -78,3 +78,4 @@ export const SCORE_VALUES = {
 
 export const RUN_DURATION_SECONDS = 72
 export const CHECKPOINTS = [0.2, 0.42, 0.66, 0.86]
+export const TOTAL_DRONE_INVENTORY = 24

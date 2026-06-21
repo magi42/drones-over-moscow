@@ -1,7 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ROUTES, SCORE_VALUES } from './config'
+import { ROUTES, SCORE_VALUES, TOTAL_DRONE_INVENTORY } from './config'
 import { actionForCode, DEFAULT_BINDINGS, readableKey } from './input'
+import {
+  BUILDING_RENDER_ROW_COUNT,
+  FLEET_FORWARD_SPEED,
+  buildingWindowStartRow,
+  isBuildingRowVisible,
+  stationIndicesByRowBand,
+} from './buildingVisibility'
 import { pointOnFlightArc, requiredFlightArc } from './flightPath'
+import {
+  isPersonJumpWindow,
+  rooftopPersonEdgePlacement,
+} from './rooftopPerson'
 import { sampleMissileTrajectory, type MissileTrajectory } from './missile'
 import { mulberry32 } from './random'
 import {
@@ -63,7 +74,7 @@ describe('deterministic simulation helpers', () => {
 
   it('lets a replacement catch and join a fleet slot moving forward', () => {
     const delta = 1 / 60
-    const fleetSpeed = 3.05
+    const fleetSpeed = FLEET_FORWARD_SPEED
     let slotPosition = 0
     let replacementPosition = 38
 
@@ -119,9 +130,12 @@ describe('deterministic simulation helpers', () => {
       {
         position: [0, 7, 0] as [number, number, number],
         scale: [12, 20, 9] as [number, number, number],
+        storeyCount: 10 as const,
         color: '#ffffff',
         apartmentBlock: true,
         rotation: 0,
+        row: 3,
+        person: null,
       },
     ]
 
@@ -131,6 +145,62 @@ describe('deterministic simulation helpers', () => {
     expect(
       lidBuildingCollision(new THREE.Vector3(20, 10, 0), buildings),
     ).toBeNull()
+  })
+
+  it('keeps exactly ten rows of apartment models in the moving window', () => {
+    const startRow = buildingWindowStartRow(-37)
+
+    expect(startRow).toBe(3)
+    expect(isBuildingRowVisible(3, startRow)).toBe(true)
+    expect(
+      isBuildingRowVisible(
+        startRow + BUILDING_RENDER_ROW_COUNT - 1,
+        startRow,
+      ),
+    ).toBe(true)
+    expect(
+      isBuildingRowVisible(startRow + BUILDING_RENDER_ROW_COUNT, startRow),
+    ).toBe(false)
+    expect(isBuildingRowVisible(startRow - 1, startRow)).toBe(false)
+  })
+
+  it('selects four air-defense stations from each ten-row band', () => {
+    const rows = [
+      3, 4, 5, 6, 7,
+      10, 11, 12, 13, 14,
+      20, 21, 22, 23, 24,
+    ]
+    const indices = stationIndicesByRowBand(rows)
+
+    expect(indices).toHaveLength(12)
+    expect(indices.map((index) => Math.floor(rows[index] / 10))).toEqual([
+      0, 0, 0, 0,
+      1, 1, 1, 1,
+      2, 2, 2, 2,
+    ])
+  })
+
+  it('allows rooftop jumps only two to four rows ahead', () => {
+    expect(isPersonJumpWindow(8, 4, 4)).toBe(true)
+    expect(isPersonJumpWindow(8, 5, 3)).toBe(true)
+    expect(isPersonJumpWindow(8, 6, 2)).toBe(true)
+    expect(isPersonJumpWindow(8, 3, 4)).toBe(false)
+    expect(isPersonJumpWindow(8, 7, 2)).toBe(false)
+  })
+
+  it('places people on the player-facing or center-facing edge', () => {
+    expect(rooftopPersonEdgePlacement('player', 24, 13.4, 9, 0)).toEqual({
+      offset: [0, 4.2],
+      direction: [0, 2.2],
+    })
+    expect(rooftopPersonEdgePlacement('center', 24, 13.4, 9, 0)).toEqual({
+      offset: [-6.4, 0],
+      direction: [-2.2, 0],
+    })
+    expect(rooftopPersonEdgePlacement('center', -24, 13.4, 9, 0)).toEqual({
+      offset: [6.4, 0],
+      direction: [2.2, 0],
+    })
   })
 })
 
@@ -142,8 +212,8 @@ describe('game state machine', () => {
       score: 0,
       bestScore: 0,
       survivors: 4,
-      totalDrones: 16,
-      launchesRemaining: 16,
+      totalDrones: TOTAL_DRONE_INVENTORY,
+      launchesRemaining: TOTAL_DRONE_INVENTORY,
       runSeed: 1,
       paused: false,
       runWon: false,
@@ -174,16 +244,18 @@ describe('game state machine', () => {
     expect(useGameStore.getState().launchDrone()).toEqual({
       accepted: true,
       replacementAvailable: true,
-      remaining: 15,
+      remaining: TOTAL_DRONE_INVENTORY - 1,
     })
     expect(useGameStore.getState().loseControlledDrone()).toBe(3)
-    expect(useGameStore.getState().totalDrones).toBe(14)
+    expect(useGameStore.getState().totalDrones).toBe(
+      TOTAL_DRONE_INVENTORY - 2,
+    )
     useGameStore.getState().togglePause()
     expect(useGameStore.getState().paused).toBe(true)
   })
 
-  it('allows exactly the full 16-drone inventory to be launched', () => {
-    const launches = Array.from({ length: 16 }, () =>
+  it('allows exactly one launch for every target in the game', () => {
+    const launches = Array.from({ length: TOTAL_DRONE_INVENTORY }, () =>
       useGameStore.getState().launchDrone(),
     )
     expect(launches.at(-1)).toEqual({

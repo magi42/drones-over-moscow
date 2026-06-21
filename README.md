@@ -19,7 +19,7 @@ air-defense station or oil tank to detach one drone; it automatically
 accelerates to the selected target while the player continues guiding the
 fleet. Striking an oil tank triggers its explosion and launches its roof. The
 camera always stays locked to the fleet and does not follow attack drones.
-The operation has 16 aircraft: four visible and twelve reserves. Every launch
+The operation has 24 aircraft: four visible and twenty reserves. Every launch
 consumes one aircraft, and replacements arrive only while reserves remain.
 Every aircraft part can collide with buildings, tanks, stations, or airborne
 tank lids. Passing beneath a pollution cloud permanently blackens the affected

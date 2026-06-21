@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { DEFAULT_BINDINGS, type KeyBindings } from '../game/input'
 import { scoreEvent, survivorBonus, type ScoreEvent } from '../game/scoring'
-import type { RouteId } from '../game/config'
+import { TOTAL_DRONE_INVENTORY, type RouteId } from '../game/config'
 
 export type GamePhase =
   | 'boot'
@@ -64,8 +64,8 @@ export const useGameStore = create<GameState>()(
       score: 0,
       bestScore: 0,
       survivors: 4,
-      totalDrones: 16,
-      launchesRemaining: 16,
+      totalDrones: TOTAL_DRONE_INVENTORY,
+      launchesRemaining: TOTAL_DRONE_INVENTORY,
       runSeed: 1,
       paused: false,
       runWon: false,
@@ -85,8 +85,8 @@ export const useGameStore = create<GameState>()(
           phase: 'flyover',
           score: 0,
           survivors: 4,
-          totalDrones: 16,
-          launchesRemaining: 16,
+          totalDrones: TOTAL_DRONE_INVENTORY,
+          launchesRemaining: TOTAL_DRONE_INVENTORY,
           runSeed: Date.now(),
           paused: false,
           runWon: false,
@@ -154,8 +154,8 @@ export const useGameStore = create<GameState>()(
           route: null,
           score: 0,
           survivors: 4,
-          totalDrones: 16,
-          launchesRemaining: 16,
+          totalDrones: TOTAL_DRONE_INVENTORY,
+          launchesRemaining: TOTAL_DRONE_INVENTORY,
           runSeed: 1,
           paused: false,
           runWon: false,

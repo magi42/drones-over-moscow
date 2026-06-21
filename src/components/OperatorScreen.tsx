@@ -29,7 +29,7 @@ export function OperatorScreen() {
               <h1>Fire Point FP-1 operator.</h1>
               <p>
                 Four Ukrainian Fire Point FP-1 drones await your guidance, with
-                twelve more in reserve. Keep the FP-1 formation intact.
+                twenty more in reserve. Keep the FP-1 formation intact.
               </p>
               <button className="primary-button" onClick={advance}>
                 ACCEPT MISSION <span>→</span>

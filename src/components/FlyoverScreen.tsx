@@ -66,6 +66,12 @@ export function FlyoverScreen() {
     },
     [],
   )
+  const updateStations = useCallback(
+    (destroyed: number, total: number) => {
+      setStations({ destroyed, total })
+    },
+    [],
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -89,7 +95,7 @@ export function FlyoverScreen() {
             onProgress={setProgress}
             onAltitude={setAltitude}
             onAttackMode={setAttackMode}
-            onStations={(destroyed, total) => setStations({ destroyed, total })}
+            onStations={updateStations}
             onFleetSlots={updateFleetSlots}
           />
         </Suspense>

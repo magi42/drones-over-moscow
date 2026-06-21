@@ -1,4 +1,4 @@
-import { Sky, useGLTF } from '@react-three/drei'
+import { Sky, useGLTF, useTexture } from '@react-three/drei'
 import { Physics, RigidBody } from '@react-three/rapier'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -10,6 +10,14 @@ import {
 } from '../game/config'
 import { actionForCode } from '../game/input'
 import { pointOnFlightArc, requiredFlightArc } from '../game/flightPath'
+import {
+  CITY_FIRST_ROW_Z,
+  CITY_ROW_SPACING,
+  FLEET_FORWARD_SPEED,
+  buildingWindowStartRow,
+  isBuildingRowVisible,
+  stationIndicesByRowBand,
+} from '../game/buildingVisibility'
 import { mulberry32 } from '../game/random'
 import {
   REPLACEMENT_JOIN_DISTANCE,
@@ -20,8 +28,12 @@ import {
   type MissileTrajectory,
 } from '../game/missile'
 import { useGameStore } from '../store/gameStore'
-import apartmentBlockUrl from '../assets/assets/models/rundown_15_storey_panel_block.glb'
 import oilTankRoofUrl from '../assets/assets/models/oil_tank_roof_blowoff_flat.glb'
+import groundTextureUrl from '../assets/assets/models/textures/texture-ground.jpg'
+import {
+  SimplifiedApartmentBlock,
+  type RooftopPersonConfig,
+} from './SimplifiedApartmentBlock'
 
 type GameWorldProps = {
   onProgress: (progress: number) => void
@@ -156,9 +168,12 @@ const droneOffsets: [number, number, number][] = [
 type BuildingData = {
   position: [number, number, number]
   scale: [number, number, number]
+  storeyCount: 10 | 11 | 15
   color: string
   apartmentBlock: boolean
   rotation: number
+  row: number
+  person: RooftopPersonConfig | null
 }
 
 type StationData = {
@@ -179,7 +194,7 @@ type CityLayout = {
 
 type BuildingDamage = Map<number, number>
 
-const BUILDING_COLLAPSE_SECONDS = 10
+const BUILDING_COLLAPSE_SECONDS = 6
 
 function buildingDamageProgress(
   buildingIndex: number,
@@ -211,23 +226,74 @@ function buildingCollapseDrop(
 function createCityLayout(seed: number): CityLayout {
   const random = mulberry32(seed)
   const columns = [-72, -48, -24, 0, 24, 48, 72]
+
+  // Create 28x7 grid of cells and make them a flat list
   const cells = Array.from({ length: 28 }, (_, row) =>
     columns.map((x, column) => ({
       x,
-      z: 8 - row * 15,
+      z: CITY_FIRST_ROW_Z - row * CITY_ROW_SPACING,
       row,
       column,
+      // This will be used to randomize the order of cells for tank/building placement
       sort: random(),
     })),
   ).flat()
+
+  // Randomly select 12 cells for tanks and 52 for buildings
   const availableCells = [...cells].sort((a, b) => a.sort - b.sort)
   const tankCells = availableCells.splice(0, 12)
-  const buildingCells = availableCells
-    .filter((cell) => cell.row >= 3)
-    .slice(0, 52)
-  const buildings = buildingCells.map((cell) => {
-    const visibleHeight = 9 + random() * 17
+  const buildingCount = 52
+  const buildingCandidates = availableCells.filter((cell) => cell.row >= 3)
+  const stationCount = 4 // Must be at most the buildings in each band
+  const guaranteedStationCells = [0, 1, 2].flatMap((band) =>
+    buildingCandidates
+      .filter((cell) => Math.floor(cell.row / 10) === band)
+      .slice(0, stationCount),
+  )
+  const guaranteedCellKeys = new Set(
+    guaranteedStationCells.map((cell) => `${cell.row}:${cell.column}`),
+  )
+  const buildingCells = [
+    ...guaranteedStationCells,
+    ...buildingCandidates.filter(
+      (cell) => !guaranteedCellKeys.has(`${cell.row}:${cell.column}`),
+    ),
+  ].slice(0, buildingCount)
+
+  // Create building and tank data with random heights and rotations
+  const upperBodyColors = ['#d94c4c', '#315fbd', '#d7a92f', '#4f8f59']
+  const lowerBodyColors = ['#26334d', '#4a382f', '#2f493c', '#4b355b']
+  const buildings = buildingCells.map((cell, buildingIndex) => {
+    const storeyHeight = 1.6
+    const basementHeight = 1.8
+    const storeyRoll = random()
+    const storeyCount: 10 | 11 | 15 =
+      storeyRoll < 0.4 ? 10 : storeyRoll < 0.7 ? 11 : 15
+    // Wall textures contain the basement below the stated storey count.
+    const visibleHeight = basementHeight + storeyCount * storeyHeight
     const scale: [number, number, number] = [13.4, visibleHeight, 9]
+    const rowTravelSeconds = CITY_ROW_SPACING / FLEET_FORWARD_SPEED
+    const person =
+      buildingIndex % 2 === 0
+        ? {
+            edge:
+              cell.x === 0 || random() < 0.5
+                ? ('player' as const)
+                : ('center' as const),
+            jumpAheadRows: (2 + Math.floor(random() * 3)) as 2 | 3 | 4,
+            jumpDelayWithinRow:
+              rowTravelSeconds * (0.12 + random() * 0.72),
+            upperColor:
+              upperBodyColors[
+                Math.floor(random() * upperBodyColors.length)
+              ],
+            lowerColor:
+              lowerBodyColors[
+                Math.floor(random() * lowerBodyColors.length)
+              ],
+            edgeOffset: (random() - 0.5) * 0.72,
+          }
+        : null
     return {
       position: [
         cell.x,
@@ -235,15 +301,23 @@ function createCityLayout(seed: number): CityLayout {
         cell.z,
       ] as [number, number, number],
       scale,
+      storeyCount,
       color: '#ffffff',
       apartmentBlock: true,
       rotation: random() > 0.5 ? Math.PI : 0,
+      row: cell.row,
+      person,
     }
   })
   const tanks = tankCells.map((cell) => ({
     position: [cell.x, 1.5, cell.z] as [number, number, number],
   }))
-  const stationIndices = [7, 17, 29, 39]
+
+  // Use 4 buildings in every 10-row band as air defense stations
+  const stationIndices = stationIndicesByRowBand(
+    buildings.map((building) => building.row),
+    stationCount,
+  )
   const stations = stationIndices.map((buildingIndex) => {
     const building = buildings[buildingIndex]
     return {
@@ -256,7 +330,7 @@ function createCityLayout(seed: number): CityLayout {
     }
   })
   const crossRoads: number[] = []
-  let roadRow = 1 + Math.floor(random() * 3)
+  let roadRow = 3 + Math.floor(random() * 3)
   while (roadRow < 28) {
     crossRoads.push(8 - roadRow * 15 + 7.5)
     roadRow += 1 + Math.floor(random() * 3)
@@ -413,111 +487,6 @@ function Drone({
   )
 }
 
-function ApartmentBlock({
-  building,
-  hitAt,
-}: {
-  building: BuildingData
-  hitAt: number | undefined
-}) {
-  const { scene } = useGLTF(apartmentBlockUrl)
-  const group = useRef<THREE.Group>(null)
-  const materials = useRef<
-    {
-      material: THREE.MeshStandardMaterial
-      baseColor: THREE.Color
-      baseEmissive: THREE.Color
-      baseEmissiveIntensity: number
-    }[]
-  >([])
-  const model = useMemo(() => {
-    const clone = scene.clone(true)
-    materials.current = []
-    clone.traverse((object: THREE.Object3D) => {
-      if (object instanceof THREE.Mesh) {
-        object.castShadow = true
-        object.receiveShadow = true
-        const sourceMaterials = Array.isArray(object.material)
-          ? object.material
-          : [object.material]
-        const brightened = sourceMaterials.map((sourceMaterial) => {
-          const material = sourceMaterial.clone()
-          if (material instanceof THREE.MeshStandardMaterial) {
-            material.color.lerp(new THREE.Color('#ffffff'), 0.68)
-            material.emissive.set('#69746d')
-            material.emissiveIntensity = 0.38
-            material.roughness = Math.min(material.roughness, 0.76)
-            materials.current.push({
-              material,
-              baseColor: material.color.clone(),
-              baseEmissive: material.emissive.clone(),
-              baseEmissiveIntensity: material.emissiveIntensity,
-            })
-          }
-          return material
-        })
-        object.material = Array.isArray(object.material)
-          ? brightened
-          : brightened[0]
-      }
-    })
-    return clone
-  }, [scene])
-  const modelScale = 0.55
-  const fullModelHeight = 48.83 * modelScale
-  const roofHeight = building.position[1] + building.scale[1] / 2
-
-  useFrame(() => {
-    const progress =
-      hitAt === undefined
-        ? 0
-        : THREE.MathUtils.clamp(
-            (performance.now() / 1000 - hitAt) / BUILDING_COLLAPSE_SECONDS,
-            0,
-            1,
-          )
-    if (group.current) {
-      group.current.position.y =
-        roofHeight -
-        fullModelHeight -
-        building.scale[1] * (2 / 3) * progress
-      group.current.scale.y = modelScale
-    }
-    materials.current.forEach((entry) => {
-      entry.material.color.copy(entry.baseColor).lerp(
-        new THREE.Color('#080908'),
-        progress * 0.88,
-      )
-      entry.material.emissive.copy(entry.baseEmissive).lerp(
-        new THREE.Color('#020202'),
-        progress,
-      )
-      entry.material.emissiveIntensity = THREE.MathUtils.lerp(
-        entry.baseEmissiveIntensity,
-        0.05,
-        progress,
-      )
-    })
-  })
-
-  return (
-    <group
-      ref={group}
-      position={[
-        building.position[0],
-        roofHeight - fullModelHeight,
-        building.position[2],
-      ]}
-      rotation={[0, building.rotation, 0]}
-      scale={[modelScale, modelScale, modelScale]}
-    >
-      <primitive object={model} />
-    </group>
-  )
-}
-
-useGLTF.preload(apartmentBlockUrl)
-
 const curvedRoofTemplates = new WeakMap<THREE.Object3D, THREE.Object3D>()
 
 function curvedRoofTemplate(scene: THREE.Object3D) {
@@ -577,16 +546,47 @@ function City({
   buildings: buildingData,
   damagedBuildings,
   crossRoads,
+  buildingStartRow,
+  paused,
 }: {
   buildings: BuildingData[]
   damagedBuildings: BuildingDamage
   crossRoads: number[]
+  buildingStartRow: number
+  paused: boolean
 }) {
+  const { gl } = useThree()
+  const groundTexture = useTexture(groundTextureUrl)
+  useEffect(() => {
+    groundTexture.colorSpace = THREE.SRGBColorSpace
+    groundTexture.wrapS = THREE.RepeatWrapping
+    groundTexture.wrapT = THREE.RepeatWrapping
+    groundTexture.repeat.set(18, 14)
+    groundTexture.anisotropy = Math.min(
+      8,
+      gl.capabilities.getMaxAnisotropy(),
+    )
+    groundTexture.needsUpdate = true
+  }, [gl, groundTexture])
+  const visibleBuildings = useMemo(
+    () =>
+      buildingData
+        .map((building, index) => ({ building, index }))
+        .filter(({ building }) =>
+          isBuildingRowVisible(building.row, buildingStartRow),
+        ),
+    [buildingData, buildingStartRow],
+  )
+
   return (
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, -190]} receiveShadow>
         <planeGeometry args={[340, 470]} />
-        <meshStandardMaterial color="#202622" roughness={1} />
+        <meshStandardMaterial
+          map={groundTexture}
+          color="#b5bab4"
+          roughness={1}
+        />
       </mesh>
       {crossRoads.map((z, index) => (
         <group key={index}>
@@ -606,11 +606,19 @@ function City({
           ))}
         </group>
       ))}
-      {buildingData.map((building, index) => (
-        <ApartmentBlock
+      {visibleBuildings.map(({ building, index }) => (
+        <SimplifiedApartmentBlock
           key={`${building.position.join('-')}-${index}`}
-          building={building}
+          position={building.position}
+          scale={building.scale}
+          storeyCount={building.storeyCount}
+          rotation={building.rotation}
           hitAt={damagedBuildings.get(index)}
+          collapseSeconds={BUILDING_COLLAPSE_SECONDS}
+          person={building.person}
+          paused={paused}
+          buildingRow={building.row}
+          fleetRow={buildingStartRow}
         />
       ))}
     </group>
@@ -1446,6 +1454,10 @@ function Simulation({
   const { buildings, tanks, stations, crossRoads } = cityLayout
   const input = useFlightInput()
   const formation = useRef<THREE.Group>(null)
+  const buildingStartRowRef = useRef(buildingWindowStartRow(CITY_FIRST_ROW_Z))
+  const [buildingStartRow, setBuildingStartRow] = useState(
+    buildingStartRowRef.current,
+  )
   const elapsed = useRef(0)
   const accumulator = useRef(0)
   const lastHudUpdate = useRef(0)
@@ -1479,6 +1491,10 @@ function Simulation({
   useEffect(() => {
     onAttackMode(attacks.length + pendingAttacks.length > 0)
   }, [attacks.length, onAttackMode, pendingAttacks.length])
+
+  useEffect(() => {
+    onStations(destroyedStations.size, stations.length)
+  }, [destroyedStations.size, onStations, stations.length])
 
   useEffect(() => {
     onFleetSlots(
@@ -1803,7 +1819,14 @@ function Simulation({
         0.5,
         28,
       )
-      formation.current.position.z -= fixedDelta * 3.05
+      formation.current.position.z -= fixedDelta * FLEET_FORWARD_SPEED
+      const nextBuildingStartRow = buildingWindowStartRow(
+        formation.current.position.z,
+      )
+      if (nextBuildingStartRow !== buildingStartRowRef.current) {
+        buildingStartRowRef.current = nextBuildingStartRow
+        setBuildingStartRow(nextBuildingStartRow)
+      }
       formation.current.rotation.z = THREE.MathUtils.lerp(
         formation.current.rotation.z,
         -horizontal * 0.18,
@@ -1905,6 +1928,8 @@ function Simulation({
         buildings={buildings}
         damagedBuildings={damagedBuildings}
         crossRoads={crossRoads}
+        buildingStartRow={buildingStartRow}
+        paused={paused}
       />
       <group ref={formation} position={[0, 5, 8]}>
         {droneOffsets.map((offset, index) => (
@@ -1977,30 +2002,37 @@ function Simulation({
           }
         }}
       />
-      {stations.map((station, index) => (
-        <AirDefenseStation
-          key={index}
-          position={station.position}
-          buildingIndex={station.buildingIndex}
-          buildings={buildings}
-          damagedBuildings={damagedBuildings}
-          destroyed={destroyedStations.has(index)}
-          targeted={attacks.some(
-            (attack) =>
-              attack.targetKind === 'station' && attack.targetIndex === index,
-          ) || pendingAttacks.some(
-            (attack) =>
-              attack.targetKind === 'station' && attack.targetIndex === index,
-          )}
-          onSelect={() =>
-            launchAtTarget('station', index, [
-              station.position[0],
-              station.position[1] + 1.5,
-              station.position[2],
-            ], station.buildingIndex)
-          }
-        />
-      ))}
+      {stations.map((station, index) =>
+        isBuildingRowVisible(
+          buildings[station.buildingIndex].row,
+          buildingStartRow,
+        ) ? (
+          <AirDefenseStation
+            key={index}
+            position={station.position}
+            buildingIndex={station.buildingIndex}
+            buildings={buildings}
+            damagedBuildings={damagedBuildings}
+            destroyed={destroyedStations.has(index)}
+            targeted={attacks.some(
+              (attack) =>
+                attack.targetKind === 'station' &&
+                attack.targetIndex === index,
+            ) || pendingAttacks.some(
+              (attack) =>
+                attack.targetKind === 'station' &&
+                attack.targetIndex === index,
+            )}
+            onSelect={() =>
+              launchAtTarget('station', index, [
+                station.position[0],
+                station.position[1] + 1.5,
+                station.position[2],
+              ], station.buildingIndex)
+            }
+          />
+        ) : null,
+      )}
       {tanks.map((tank, index) => (
         <OilTank
           key={index}
