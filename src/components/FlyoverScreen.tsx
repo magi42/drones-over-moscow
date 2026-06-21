@@ -49,12 +49,15 @@ export function FlyoverScreen() {
   const [queuedAttacks, setQueuedAttacks] = useState(0)
   const routeId = useGameStore((state) => state.route)!
   const route = ROUTES[routeId]
+  const runSeed = useGameStore((state) => state.runSeed)
   const score = useGameStore((state) => state.score)
   const survivors = useGameStore((state) => state.survivors)
   const launchesRemaining = useGameStore((state) => state.launchesRemaining)
   const paused = useGameStore((state) => state.paused)
   const togglePause = useGameStore((state) => state.togglePause)
   const setSettingsOpen = useGameStore((state) => state.setSettingsOpen)
+  const restartRun = useGameStore((state) => state.restartRun)
+  const returnToMain = useGameStore((state) => state.returnToMain)
   const bindings = useGameStore((state) => state.settings.bindings)
   const updateFleetSlots = useCallback(
     (
@@ -92,6 +95,7 @@ export function FlyoverScreen() {
       >
         <Suspense fallback={null}>
           <GameWorld
+            key={runSeed}
             onProgress={setProgress}
             onAltitude={setAltitude}
             onAttackMode={setAttackMode}
@@ -145,6 +149,8 @@ export function FlyoverScreen() {
             <h2>Paused</h2>
             <button className="primary-button" onClick={togglePause}>RESUME</button>
             <button className="text-button" onClick={() => setSettingsOpen(true)}>SETTINGS</button>
+            <button className="text-button" onClick={restartRun}>RESTART GAME</button>
+            <button className="text-button" onClick={returnToMain}>MAIN SCREEN</button>
           </div>
         </div>
       )}

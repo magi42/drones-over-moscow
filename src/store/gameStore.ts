@@ -46,7 +46,8 @@ type GameState = {
   setSettingsOpen: (open: boolean) => void
   updateSettings: (settings: Partial<Settings>) => void
   updateBinding: (action: keyof KeyBindings, code: string) => void
-  restart: () => void
+  restartRun: () => void
+  returnToMain: () => void
 }
 
 const nextPhase: Partial<Record<GamePhase, GamePhase>> = {
@@ -148,7 +149,19 @@ export const useGameStore = create<GameState>()(
             bindings: { ...state.settings.bindings, [action]: code },
           },
         })),
-      restart: () =>
+      restartRun: () =>
+        set({
+          phase: 'flyover',
+          score: 0,
+          survivors: 4,
+          totalDrones: TOTAL_DRONE_INVENTORY,
+          launchesRemaining: TOTAL_DRONE_INVENTORY,
+          runSeed: Date.now(),
+          paused: false,
+          runWon: false,
+          settingsOpen: false,
+        }),
+      returnToMain: () =>
         set({
           phase: 'operator',
           route: null,
@@ -159,6 +172,7 @@ export const useGameStore = create<GameState>()(
           runSeed: 1,
           paused: false,
           runWon: false,
+          settingsOpen: false,
         }),
     }),
     {

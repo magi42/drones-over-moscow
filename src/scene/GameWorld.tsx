@@ -10,6 +10,7 @@ import {
 } from '../game/config'
 import { actionForCode } from '../game/input'
 import { pointOnFlightArc, requiredFlightArc } from '../game/flightPath'
+import { protectedBuildingIndices } from '../game/buildingProtection'
 import {
   CITY_FIRST_ROW_Z,
   CITY_ROW_SPACING,
@@ -292,6 +293,7 @@ function createCityLayout(seed: number): CityLayout {
                 Math.floor(random() * lowerBodyColors.length)
               ],
             edgeOffset: (random() - 0.5) * 0.72,
+            hasCompanions: random() < 0.75,
           }
         : null
     return {
@@ -318,6 +320,9 @@ function createCityLayout(seed: number): CityLayout {
     buildings.map((building) => building.row),
     stationCount,
   )
+  stationIndices.forEach((buildingIndex) => {
+    buildings[buildingIndex].person = null
+  })
   const stations = stationIndices.map((buildingIndex) => {
     const building = buildings[buildingIndex]
     return {
@@ -622,58 +627,6 @@ function City({
         />
       ))}
     </group>
-  )
-}
-
-const debrisData = Array.from({ length: 100 }, (_, index) => {
-  const random = mulberry32(9300 + index)
-  return {
-    position: [
-      -16 + random() * 5,
-      2 + random() * 4,
-      -35 + random() * 5,
-    ] as [number, number, number],
-    scale: [
-      0.14 + random() * 0.34,
-      0.1 + random() * 0.25,
-      0.18 + random() * 0.5,
-    ] as [number, number, number],
-    velocity: [
-      -5 + random() * 10,
-      7 + random() * 16,
-      -4 + random() * 8,
-    ] as [number, number, number],
-    angular: [
-      -8 + random() * 16,
-      -8 + random() * 16,
-      -8 + random() * 16,
-    ] as [number, number, number],
-  }
-})
-
-function DebrisField({ count }: { count: number }) {
-  return (
-    <>
-      {debrisData.slice(0, count).map((debris, index) => (
-        <RigidBody
-          key={index}
-          colliders="cuboid"
-          position={debris.position}
-          linearVelocity={debris.velocity}
-          angularVelocity={debris.angular}
-          mass={0.08}
-        >
-          <mesh scale={debris.scale} castShadow>
-            <boxGeometry />
-            <meshStandardMaterial
-              color={index % 3 === 0 ? '#d98935' : '#626861'}
-              metalness={0.65}
-              roughness={0.48}
-            />
-          </mesh>
-        </RigidBody>
-      ))}
-    </>
   )
 }
 
@@ -1077,6 +1030,10 @@ function Missiles({
         performance.now() / 1000,
       )
       const targetZ = target.current.position.z
+      const missileProtectedBuildings = protectedBuildingIndices(
+        stationData.map((candidate) => candidate.buildingIndex),
+        buildingData.map((building) => building.person !== null),
+      )
       const possibleImpacts: MissileImpact[] = [
         ...tankData
           .map((tank, tankIndex) => ({
@@ -1089,25 +1046,29 @@ function Missiles({
             },
           }))
           .filter((impact) => !destroyedTanks.has(impact.index)),
-        ...buildingData.map((building, buildingIndex) => ({
-          kind: 'building' as const,
-          index: buildingIndex,
-          position: {
-            x: building.position[0],
-            y:
-              building.position[1] +
-              THREE.MathUtils.lerp(
-                building.scale[1] / 2,
-                -building.scale[1] / 6,
-                buildingDamageProgress(
-                  buildingIndex,
-                  damagedBuildings,
-                  performance.now() / 1000,
+        ...buildingData
+          .map((building, buildingIndex) => ({
+            kind: 'building' as const,
+            index: buildingIndex,
+            position: {
+              x: building.position[0],
+              y:
+                building.position[1] +
+                THREE.MathUtils.lerp(
+                  building.scale[1] / 2,
+                  -building.scale[1] / 6,
+                  buildingDamageProgress(
+                    buildingIndex,
+                    damagedBuildings,
+                    performance.now() / 1000,
+                  ),
                 ),
-              ),
-            z: building.position[2],
-          },
-        })),
+              z: building.position[2],
+            },
+          }))
+          .filter(
+            (impact) => !missileProtectedBuildings.has(impact.index),
+          ),
       ]
       const visibleImpacts = possibleImpacts.filter(
         (impact) => Math.abs(impact.position.z - targetZ) < 75,
@@ -2071,9 +2032,6 @@ function Simulation({
           }}
         />
       ))}
-      {explodedTanks.size > 0 && (
-        <DebrisField count={reducedEffects ? 24 : 100} />
-      )}
       {droneExplosions.map((explosion) => (
         <group key={explosion.id} position={explosion.position}>
           <Explosion />

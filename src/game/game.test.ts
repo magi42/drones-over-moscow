@@ -8,6 +8,7 @@ import {
   isBuildingRowVisible,
   stationIndicesByRowBand,
 } from './buildingVisibility'
+import { protectedBuildingIndices } from './buildingProtection'
 import { pointOnFlightArc, requiredFlightArc } from './flightPath'
 import {
   isPersonJumpWindow,
@@ -202,6 +203,17 @@ describe('deterministic simulation helpers', () => {
       direction: [2.2, 0],
     })
   })
+
+  it('protects station and occupied buildings from missile impacts', () => {
+    const protectedIndices = protectedBuildingIndices(
+      [1, 5],
+      [true, true, false, true, false, false],
+    )
+
+    expect([...protectedIndices].sort((a, b) => a - b)).toEqual([
+      0, 1, 3, 5,
+    ])
+  })
 })
 
 describe('game state machine', () => {
@@ -272,6 +284,40 @@ describe('game state machine', () => {
       totalDrones: 0,
       launchesRemaining: 0,
       survivors: 0,
+    })
+  })
+
+  it('restarts the current route and returns directly to the main screen', () => {
+    useGameStore.setState({
+      phase: 'results',
+      route: 'ukraine',
+      score: 4200,
+      survivors: 1,
+      launchesRemaining: 3,
+      totalDrones: 3,
+      paused: true,
+      settingsOpen: true,
+    })
+
+    useGameStore.getState().restartRun()
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'flyover',
+      route: 'ukraine',
+      score: 0,
+      survivors: 4,
+      launchesRemaining: TOTAL_DRONE_INVENTORY,
+      paused: false,
+      settingsOpen: false,
+    })
+
+    useGameStore.getState().returnToMain()
+    expect(useGameStore.getState()).toMatchObject({
+      phase: 'operator',
+      route: null,
+      score: 0,
+      survivors: 4,
+      launchesRemaining: TOTAL_DRONE_INVENTORY,
+      paused: false,
     })
   })
 })

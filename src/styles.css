@@ -265,6 +265,8 @@ h1, h2 {
 .result-stats { display:grid; grid-template-columns:1fr 1fr; margin-bottom:32px; }
 .result-stats div:first-child { border-right:1px solid #29342f; }
 .result-stats strong,.result-stats span { display:block; }.result-stats strong{font-size:22px}.result-stats span{font-size:9px;color:#718078;margin-top:5px}
+.results-card > button { width:100%; }
+.result-main-button { margin-top:10px; }
 
 /* Settings */
 .modal-backdrop { position:fixed; z-index:100; inset:0; display:grid; place-items:center; background:rgba(0,0,0,.72); backdrop-filter:blur(7px); }

@@ -2,7 +2,15 @@ import { ROUTES } from '../game/config'
 import { useGameStore } from '../store/gameStore'
 
 export function ResultsScreen() {
-  const { runWon, score, bestScore, survivors, route, restart } = useGameStore()
+  const {
+    runWon,
+    score,
+    bestScore,
+    survivors,
+    route,
+    restartRun,
+    returnToMain,
+  } = useGameStore()
   const routeName = route ? ROUTES[route].name : 'Unknown'
 
   return (
@@ -20,7 +28,8 @@ export function ResultsScreen() {
           <div><strong>{survivors}/4</strong><span>FP-1 drones recovered</span></div>
           <div><strong>{bestScore.toLocaleString()}</strong><span>Personal best</span></div>
         </div>
-        <button className="primary-button" onClick={restart}>RETURN TO CONSOLE</button>
+        <button className="primary-button" onClick={restartRun}>RESTART GAME</button>
+        <button className="text-button result-main-button" onClick={returnToMain}>MAIN SCREEN</button>
       </div>
     </section>
   )

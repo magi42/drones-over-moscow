@@ -1,6 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useTexture } from '@react-three/drei'
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import wallTexture10Url from '../assets/assets/models/textures/texture-house-wall-10-storeys-white.jpg'
 import wallTexture11Url from '../assets/assets/models/textures/texture-house-wall-11-storeys-white.jpg'
@@ -30,6 +30,7 @@ export type RooftopPersonConfig = {
   upperColor: string
   lowerColor: string
   edgeOffset: number
+  hasCompanions: boolean
 }
 
 const unitBoxGeometry = new THREE.BoxGeometry(1, 1, 1)
@@ -80,6 +81,7 @@ function RooftopPerson({
     'standing',
   )
   const velocityY = useRef(0)
+  const [jumperLaunched, setJumperLaunched] = useState(false)
   const roofHeight = buildingPosition[1] + buildingHeight / 2
   const groundY = -2.78
   const edgePlacement = useMemo(
@@ -99,6 +101,18 @@ function RooftopPerson({
       config.edgeOffset,
     ],
   )
+  const companionOffsets = useMemo(() => {
+    const [directionX, directionZ] = edgePlacement.direction
+    const directionLength = Math.hypot(directionX, directionZ)
+    const forwardX = directionX / directionLength
+    const forwardZ = directionZ / directionLength
+    const sideX = -forwardZ
+    const sideZ = forwardX
+    return [-0.42, 0.42].map((side) => [
+      edgePlacement.offset[0] - forwardX * 0.72 + sideX * side,
+      edgePlacement.offset[1] - forwardZ * 0.72 + sideZ * side,
+    ] as [number, number])
+  }, [edgePlacement])
   const upperMaterial = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
@@ -123,18 +137,28 @@ function RooftopPerson({
       }),
     [],
   )
+  const helperBlackMaterial = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#080908',
+        roughness: 0.9,
+      }),
+    [],
+  )
 
   useEffect(
     () => () => {
       upperMaterial.dispose()
       lowerMaterial.dispose()
       skinMaterial.dispose()
+      helperBlackMaterial.dispose()
     },
-    [lowerMaterial, skinMaterial, upperMaterial],
+    [helperBlackMaterial, lowerMaterial, skinMaterial, upperMaterial],
   )
 
   useFrame((_, delta) => {
-    if (paused || !person.current || phase.current === 'lying') return
+    if (paused || !person.current) return
+    if (phase.current === 'lying') return
     const inJumpWindow = isPersonJumpWindow(
       buildingRow,
       fleetRow,
@@ -153,6 +177,7 @@ function RooftopPerson({
     ) {
       phase.current = 'jumping'
       velocityY.current = 1.7
+      setJumperLaunched(true)
     }
 
     if (phase.current === 'standing') {
@@ -199,24 +224,155 @@ function RooftopPerson({
     }
   })
 
+  const facingRotation = Math.atan2(
+    edgePlacement.direction[0],
+    edgePlacement.direction[1],
+  )
+
+  return (
+    <>
+      <group
+        ref={person}
+        position={[
+          buildingPosition[0] + edgePlacement.offset[0],
+          roofHeight + 1.05,
+          buildingPosition[2] + edgePlacement.offset[1],
+        ]}
+        rotation={[0, facingRotation, 0]}
+        scale={0.82}
+      >
+        <StickFigure
+          upperMaterial={upperMaterial}
+          lowerMaterial={lowerMaterial}
+          skinMaterial={skinMaterial}
+        />
+      </group>
+      {config.hasCompanions && (
+        <>
+          {companionOffsets.map(([x, z], index) => (
+            <RetreatingHelper
+              key={index}
+              buildingPosition={buildingPosition}
+              roofHeight={roofHeight}
+              startOffset={[x, z]}
+              edge={config.edge}
+              facingRotation={facingRotation}
+              paused={paused}
+              active={jumperLaunched}
+              upperMaterial={helperBlackMaterial}
+              lowerMaterial={helperBlackMaterial}
+              skinMaterial={skinMaterial}
+            />
+          ))}
+        </>
+      )}
+    </>
+  )
+}
+
+function RetreatingHelper({
+  buildingPosition,
+  roofHeight,
+  startOffset,
+  edge,
+  facingRotation,
+  paused,
+  active,
+  upperMaterial,
+  lowerMaterial,
+  skinMaterial,
+}: {
+  buildingPosition: [number, number, number]
+  roofHeight: number
+  startOffset: [number, number]
+  edge: 'player' | 'center'
+  facingRotation: number
+  paused: boolean
+  active: boolean
+  upperMaterial: THREE.Material
+  lowerMaterial: THREE.Material
+  skinMaterial: THREE.Material
+}) {
+  const helper = useRef<THREE.Group>(null)
+  const elapsed = useRef(0)
+  const retreatSeconds = 3.0
+  const sinkSeconds = 0.65
+  const targetOffset: [number, number] =
+    edge === 'player'
+      ? [startOffset[0], 0]
+      : [0, startOffset[1]]
+
+  useFrame((_, delta) => {
+    if (
+      paused ||
+      !active ||
+      !helper.current ||
+      !helper.current.visible
+    ) {
+      return
+    }
+    elapsed.current += delta
+    const retreatProgress = THREE.MathUtils.smoothstep(
+      elapsed.current,
+      0,
+      retreatSeconds,
+    )
+    helper.current.position.x =
+      buildingPosition[0] +
+      THREE.MathUtils.lerp(
+        startOffset[0],
+        targetOffset[0],
+        retreatProgress,
+      )
+    helper.current.position.z =
+      buildingPosition[2] +
+      THREE.MathUtils.lerp(
+        startOffset[1],
+        targetOffset[1],
+        retreatProgress,
+      )
+
+    if (elapsed.current <= retreatSeconds) return
+    const sinkProgress = THREE.MathUtils.smoothstep(
+      elapsed.current,
+      retreatSeconds,
+      retreatSeconds + sinkSeconds,
+    )
+    helper.current.position.y = roofHeight + 1.05 - sinkProgress * 2.4
+    if (sinkProgress >= 1) helper.current.visible = false
+  })
+
   return (
     <group
-      ref={person}
+      ref={helper}
       position={[
-        buildingPosition[0] + edgePlacement.offset[0],
+        buildingPosition[0] + startOffset[0],
         roofHeight + 1.05,
-        buildingPosition[2] + edgePlacement.offset[1],
+        buildingPosition[2] + startOffset[1],
       ]}
-      rotation={[
-        0,
-        Math.atan2(
-          edgePlacement.direction[0],
-          edgePlacement.direction[1],
-        ),
-        0,
-      ]}
+      rotation={[0, facingRotation + Math.PI, 0]}
       scale={0.82}
     >
+      <StickFigure
+        upperMaterial={upperMaterial}
+        lowerMaterial={lowerMaterial}
+        skinMaterial={skinMaterial}
+      />
+    </group>
+  )
+}
+
+function StickFigure({
+  upperMaterial,
+  lowerMaterial,
+  skinMaterial,
+}: {
+  upperMaterial: THREE.Material
+  lowerMaterial: THREE.Material
+  skinMaterial: THREE.Material
+}) {
+  return (
+    <>
       <mesh geometry={headGeometry} material={skinMaterial} position={[0, 0.95, 0]} castShadow />
       <mesh geometry={unitBoxGeometry} material={upperMaterial} position={[0, 0.48, 0]} scale={[0.32, 0.55, 0.2]} castShadow />
       <mesh geometry={limbGeometry} material={upperMaterial} position={[-0.25, 0.48, 0]} rotation={[0, 0, -0.35]} castShadow />
@@ -224,7 +380,7 @@ function RooftopPerson({
       <mesh geometry={unitBoxGeometry} material={lowerMaterial} position={[0, 0.12, 0]} scale={[0.3, 0.22, 0.2]} castShadow />
       <mesh geometry={limbGeometry} material={lowerMaterial} position={[-0.1, -0.28, 0]} castShadow />
       <mesh geometry={limbGeometry} material={lowerMaterial} position={[0.1, -0.28, 0]} castShadow />
-    </group>
+    </>
   )
 }
 
