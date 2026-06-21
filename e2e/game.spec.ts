@@ -16,4 +16,12 @@ test('operator can select a route, launch, and reach results', async ({ page }) 
   })
   await expect(page.getByRole('heading', { name: /formation extracted/i })).toBeVisible()
   await expect(page.getByText(/drones recovered/i)).toBeVisible()
+  await page.getByRole('button', { name: /restart game/i }).click()
+  await expect(page.getByText(/formation control/i)).toBeVisible({
+    timeout: 15_000,
+  })
+  await expect(page.getByText('0000000')).toBeVisible()
+  await page.getByRole('button', { name: 'II' }).click()
+  await page.getByRole('button', { name: /main screen/i }).click()
+  await expect(page.getByRole('button', { name: /accept mission/i })).toBeVisible()
 })

@@ -4,7 +4,9 @@ import { actionForCode, DEFAULT_BINDINGS, readableKey } from './input'
 import {
   BUILDING_RENDER_ROW_COUNT,
   FLEET_FORWARD_SPEED,
+  availableJumpAheadRows,
   buildingWindowStartRow,
+  cityRowForZ,
   isBuildingRowVisible,
   stationIndicesByRowBand,
 } from './buildingVisibility'
@@ -189,6 +191,16 @@ describe('deterministic simulation helpers', () => {
     expect(isPersonJumpWindow(8, 7, 2)).toBe(false)
   })
 
+  it('only assigns jump distances that exist before early buildings', () => {
+    expect(availableJumpAheadRows(3)).toEqual([2, 3])
+    expect(availableJumpAheadRows(4)).toEqual([2, 3, 4])
+  })
+
+  it('maps world positions to rows for object culling', () => {
+    expect(cityRowForZ(8)).toBe(0)
+    expect(cityRowForZ(-37)).toBe(3)
+  })
+
   it('places people on the player-facing or center-facing edge', () => {
     expect(rooftopPersonEdgePlacement('player', 24, 13.4, 9, 0)).toEqual({
       offset: [0, 4.2],
@@ -297,8 +309,10 @@ describe('game state machine', () => {
       totalDrones: 3,
       paused: true,
       settingsOpen: true,
+      runSeed: 500,
     })
 
+    const previousRunSeed = useGameStore.getState().runSeed
     useGameStore.getState().restartRun()
     expect(useGameStore.getState()).toMatchObject({
       phase: 'flyover',
@@ -309,6 +323,7 @@ describe('game state machine', () => {
       paused: false,
       settingsOpen: false,
     })
+    expect(useGameStore.getState().runSeed).toBeGreaterThan(previousRunSeed)
 
     useGameStore.getState().returnToMain()
     expect(useGameStore.getState()).toMatchObject({

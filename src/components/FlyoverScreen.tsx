@@ -77,6 +77,15 @@ export function FlyoverScreen() {
   )
 
   useEffect(() => {
+    setProgress(0)
+    setAltitude(200)
+    setAttackMode(false)
+    setStations({ destroyed: 0, total: 4 })
+    setFleetSlots(['ready', 'ready', 'ready', 'ready'])
+    setQueuedAttacks(0)
+  }, [runSeed])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code === bindings.pause) togglePause()
     }
@@ -88,6 +97,7 @@ export function FlyoverScreen() {
     <section className={`screen flyover-screen ${attackMode ? 'attack-active' : ''}`}>
       <FlightAudio />
       <Canvas
+        key={runSeed}
         shadows
         dpr={[1, 1.65]}
         camera={{ position: [0, 7, 16], fov: 58, near: 0.1, far: 520 }}
@@ -95,7 +105,6 @@ export function FlyoverScreen() {
       >
         <Suspense fallback={null}>
           <GameWorld
-            key={runSeed}
             onProgress={setProgress}
             onAltitude={setAltitude}
             onAttackMode={setAttackMode}

@@ -81,17 +81,19 @@ export const useGameStore = create<GameState>()(
           phase: nextPhase[state.phase] ?? state.phase,
         })),
       selectRoute: (route) => set({ route, phase: 'briefing' }),
-      startRun: () =>
+      startRun: () => {
+        const runSeed = Math.max(Date.now(), get().runSeed + 1)
         set({
           phase: 'flyover',
           score: 0,
           survivors: 4,
           totalDrones: TOTAL_DRONE_INVENTORY,
           launchesRemaining: TOTAL_DRONE_INVENTORY,
-          runSeed: Date.now(),
+          runSeed,
           paused: false,
           runWon: false,
-        }),
+        })
+      },
       addScore: (event) => {
         const route = get().route
         if (!route) return
@@ -149,18 +151,20 @@ export const useGameStore = create<GameState>()(
             bindings: { ...state.settings.bindings, [action]: code },
           },
         })),
-      restartRun: () =>
+      restartRun: () => {
+        const runSeed = Math.max(Date.now(), get().runSeed + 1)
         set({
           phase: 'flyover',
           score: 0,
           survivors: 4,
           totalDrones: TOTAL_DRONE_INVENTORY,
           launchesRemaining: TOTAL_DRONE_INVENTORY,
-          runSeed: Date.now(),
+          runSeed,
           paused: false,
           runWon: false,
           settingsOpen: false,
-        }),
+        })
+      },
       returnToMain: () =>
         set({
           phase: 'operator',

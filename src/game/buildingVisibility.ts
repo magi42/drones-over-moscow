@@ -14,6 +14,19 @@ export function isBuildingRowVisible(row: number, startRow: number) {
   return row >= startRow && row < startRow + BUILDING_RENDER_ROW_COUNT
 }
 
+export function availableJumpAheadRows(buildingRow: number) {
+  return ([2, 3, 4] as const).filter(
+    (rowsAhead) => rowsAhead <= buildingRow,
+  )
+}
+
+export function cityRowForZ(z: number) {
+  return Math.max(
+    0,
+    Math.round((CITY_FIRST_ROW_Z - z) / CITY_ROW_SPACING),
+  )
+}
+
 export function stationIndicesByRowBand(
   buildingRows: number[],
   stationsPerBand = 4,

@@ -35,8 +35,6 @@ export type RooftopPersonConfig = {
 
 const unitBoxGeometry = new THREE.BoxGeometry(1, 1, 1)
 const antennaGeometry = new THREE.CylinderGeometry(0.11, 0.14, 1, 6)
-const limbGeometry = new THREE.CylinderGeometry(0.075, 0.075, 0.7, 6)
-const headGeometry = new THREE.SphereGeometry(0.18, 8, 6)
 const blackColor = new THREE.Color('#080908')
 const blackEmissive = new THREE.Color('#020202')
 const roofBlockPositions: [number, number][] = [
@@ -373,13 +371,13 @@ function StickFigure({
 }) {
   return (
     <>
-      <mesh geometry={headGeometry} material={skinMaterial} position={[0, 0.95, 0]} castShadow />
+      <mesh geometry={unitBoxGeometry} material={skinMaterial} position={[0, 0.95, 0]} scale={[0.32, 0.32, 0.32]} castShadow />
       <mesh geometry={unitBoxGeometry} material={upperMaterial} position={[0, 0.48, 0]} scale={[0.32, 0.55, 0.2]} castShadow />
-      <mesh geometry={limbGeometry} material={upperMaterial} position={[-0.25, 0.48, 0]} rotation={[0, 0, -0.35]} castShadow />
-      <mesh geometry={limbGeometry} material={upperMaterial} position={[0.25, 0.48, 0]} rotation={[0, 0, 0.35]} castShadow />
+      <mesh geometry={unitBoxGeometry} material={upperMaterial} position={[-0.25, 0.48, 0]} rotation={[0, 0, -0.35]} scale={[0.13, 0.7, 0.13]} castShadow />
+      <mesh geometry={unitBoxGeometry} material={upperMaterial} position={[0.25, 0.48, 0]} rotation={[0, 0, 0.35]} scale={[0.13, 0.7, 0.13]} castShadow />
       <mesh geometry={unitBoxGeometry} material={lowerMaterial} position={[0, 0.12, 0]} scale={[0.3, 0.22, 0.2]} castShadow />
-      <mesh geometry={limbGeometry} material={lowerMaterial} position={[-0.1, -0.28, 0]} castShadow />
-      <mesh geometry={limbGeometry} material={lowerMaterial} position={[0.1, -0.28, 0]} castShadow />
+      <mesh geometry={unitBoxGeometry} material={lowerMaterial} position={[-0.1, -0.28, 0]} scale={[0.13, 0.7, 0.13]} castShadow />
+      <mesh geometry={unitBoxGeometry} material={lowerMaterial} position={[0.1, -0.28, 0]} scale={[0.13, 0.7, 0.13]} castShadow />
     </>
   )
 }

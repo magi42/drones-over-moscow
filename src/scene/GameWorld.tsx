@@ -15,7 +15,9 @@ import {
   CITY_FIRST_ROW_Z,
   CITY_ROW_SPACING,
   FLEET_FORWARD_SPEED,
+  availableJumpAheadRows,
   buildingWindowStartRow,
+  cityRowForZ,
   isBuildingRowVisible,
   stationIndicesByRowBand,
 } from '../game/buildingVisibility'
@@ -184,6 +186,7 @@ type StationData = {
 
 type TankData = {
   position: [number, number, number]
+  row: number
 }
 
 type CityLayout = {
@@ -274,6 +277,7 @@ function createCityLayout(seed: number): CityLayout {
     const visibleHeight = basementHeight + storeyCount * storeyHeight
     const scale: [number, number, number] = [13.4, visibleHeight, 9]
     const rowTravelSeconds = CITY_ROW_SPACING / FLEET_FORWARD_SPEED
+    const jumpAheadOptions = availableJumpAheadRows(cell.row)
     const person =
       buildingIndex % 2 === 0
         ? {
@@ -281,7 +285,10 @@ function createCityLayout(seed: number): CityLayout {
               cell.x === 0 || random() < 0.5
                 ? ('player' as const)
                 : ('center' as const),
-            jumpAheadRows: (2 + Math.floor(random() * 3)) as 2 | 3 | 4,
+            jumpAheadRows:
+              jumpAheadOptions[
+                Math.floor(random() * jumpAheadOptions.length)
+              ],
             jumpDelayWithinRow:
               rowTravelSeconds * (0.12 + random() * 0.72),
             upperColor:
@@ -313,6 +320,7 @@ function createCityLayout(seed: number): CityLayout {
   })
   const tanks = tankCells.map((cell) => ({
     position: [cell.x, 1.5, cell.z] as [number, number, number],
+    row: cell.row,
   }))
 
   // Use 4 buildings in every 10-row band as air defense stations
@@ -593,7 +601,8 @@ function City({
           roughness={1}
         />
       </mesh>
-      {crossRoads.map((z, index) => (
+      {crossRoads.map((z, index) =>
+        isBuildingRowVisible(cityRowForZ(z), buildingStartRow) ? (
         <group key={index}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.94, z]}>
             <planeGeometry args={[330, 6]} />
@@ -610,7 +619,8 @@ function City({
             </mesh>
           ))}
         </group>
-      ))}
+        ) : null,
+      )}
       {visibleBuildings.map(({ building, index }) => (
         <SimplifiedApartmentBlock
           key={`${building.position.join('-')}-${index}`}
@@ -660,8 +670,8 @@ function OilTank({
         document.body.style.cursor = ''
       }}
     >
-      <mesh castShadow receiveShadow>
-        <cylinderGeometry args={[4.3, 4.3, 3.4, 20]} />
+      <mesh position={[0, -1.4, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[4.3, 4.3, 6.2, 20]} />
         <meshStandardMaterial
           color={exploded ? '#4c4b45' : '#b7b9ae'}
           metalness={0.58}
@@ -947,10 +957,13 @@ function AirDefenseStation({
             ))}
           </group>
           <mesh position={[0, 2.2, -1.6]}>
-            <sphereGeometry args={[0.55, 12, 8]} />
-            <meshStandardMaterial color="#202823" emissive="#f13f2f" emissiveIntensity={1.8} />
+            <boxGeometry args={[0.8, 0.8, 0.8]} />
+            <meshStandardMaterial
+              color="#ffd84a"
+              emissive="#ffd84a"
+              emissiveIntensity={1.15}
+            />
           </mesh>
-          <pointLight position={[0, 2.2, -1.6]} color="#ff3d2c" intensity={2} distance={9} />
           <mesh position={[0, 4.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
             <ringGeometry args={[3.7, 4, 32]} />
             <meshBasicMaterial
@@ -1142,12 +1155,11 @@ function Missiles({
         <group key={index} ref={(node) => { meshRefs.current[index] = node }}>
           <mesh rotation={[Math.PI / 2, 0, 0]}>
             <cylinderGeometry args={[0.12, 0.2, 1.7, 7]} />
-            <meshStandardMaterial color="#d6d1b7" emissive="#ff5b19" emissiveIntensity={0.25} />
+            <meshStandardMaterial color="#d6d1b7" />
           </mesh>
-          <pointLight color="#ff5a16" intensity={2.5} distance={6} />
           <mesh position={[0, 0, 0.95]}>
-            <sphereGeometry args={[0.25, 6, 6]} />
-            <meshBasicMaterial color="#ff6a1f" transparent opacity={0.8} />
+            <boxGeometry args={[0.3, 0.3, 0.5]} />
+            <meshBasicMaterial color="#ffe14f" />
           </mesh>
         </group>
       ))}
@@ -1994,7 +2006,8 @@ function Simulation({
           />
         ) : null,
       )}
-      {tanks.map((tank, index) => (
+      {tanks.map((tank, index) =>
+        isBuildingRowVisible(tank.row, buildingStartRow) ? (
         <OilTank
           key={index}
           index={index}
@@ -2016,8 +2029,10 @@ function Simulation({
           }
           onLidPosition={trackLidPosition}
         />
-      ))}
-      {Array.from(explodedTanks).map((tankIndex) => (
+        ) : null,
+      )}
+      {Array.from(explodedTanks).map((tankIndex) =>
+        isBuildingRowVisible(tanks[tankIndex].row, buildingStartRow) ? (
         <PollutionCloud
           key={tankIndex}
           index={tankIndex}
@@ -2031,7 +2046,8 @@ function Simulation({
             }
           }}
         />
-      ))}
+        ) : null,
+      )}
       {droneExplosions.map((explosion) => (
         <group key={explosion.id} position={explosion.position}>
           <Explosion />
