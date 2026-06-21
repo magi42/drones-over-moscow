@@ -16,6 +16,41 @@ export type MissileSample = {
   complete: boolean
 }
 
+export function segmentPointDistanceSquared(
+  start: Vec3,
+  end: Vec3,
+  point: Vec3,
+) {
+  const segmentX = end.x - start.x
+  const segmentY = end.y - start.y
+  const segmentZ = end.z - start.z
+  const lengthSquared =
+    segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ
+  if (lengthSquared === 0) {
+    const dx = point.x - start.x
+    const dy = point.y - start.y
+    const dz = point.z - start.z
+    return dx * dx + dy * dy + dz * dz
+  }
+  const projection = Math.max(
+    0,
+    Math.min(
+      1,
+      ((point.x - start.x) * segmentX +
+        (point.y - start.y) * segmentY +
+        (point.z - start.z) * segmentZ) /
+        lengthSquared,
+    ),
+  )
+  const closestX = start.x + segmentX * projection
+  const closestY = start.y + segmentY * projection
+  const closestZ = start.z + segmentZ * projection
+  const dx = point.x - closestX
+  const dy = point.y - closestY
+  const dz = point.z - closestZ
+  return dx * dx + dy * dy + dz * dz
+}
+
 const cubic = (a: number, b: number, c: number, d: number, t: number) => {
   const inverse = 1 - t
   return (

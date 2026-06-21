@@ -28,6 +28,7 @@ import {
 } from '../game/replacement'
 import {
   sampleMissileTrajectory,
+  segmentPointDistanceSquared,
   type MissileTrajectory,
 } from '../game/missile'
 import { useGameStore } from '../store/gameStore'
@@ -991,6 +992,8 @@ function Missiles({
   stations: stationData,
   tanks: tankData,
   damagedBuildings,
+  activeFleetSlots,
+  onFleetHit,
 }: {
   target: React.RefObject<THREE.Group | null>
   active: boolean
@@ -1002,6 +1005,8 @@ function Missiles({
   stations: StationData[]
   tanks: TankData[]
   damagedBuildings: BuildingDamage
+  activeFleetSlots: number[]
+  onFleetHit: (slot: number, position: THREE.Vector3) => void
 }) {
   const meshRefs = useRef<(THREE.Group | null)[]>([])
   const random = useMemo(() => mulberry32(8128), [])
@@ -1010,117 +1015,183 @@ function Missiles({
       trajectory: MissileTrajectory | null
       age: number
       impact: MissileImpact | null
+      targetsFleet: boolean
+      previousPosition: { x: number; y: number; z: number } | null
     }[]
   >(
     Array.from({ length: 24 }, () => ({
       trajectory: null,
       age: 0,
       impact: null,
+      targetsFleet: false,
+      previousPosition: null,
     })),
   )
   const spawnClock = useRef(0)
   const spawnIndex = useRef(0)
+  const directFireStations = useRef<Set<number>>(new Set())
 
   useFrame((_, delta) => {
     if (!active || !target.current) return
     spawnClock.current += delta
     const spawnEvery = Math.max(0.48, 1.35 / intensity)
-    if (spawnClock.current > spawnEvery) {
-      spawnClock.current = 0
-      const availableStations = stationData
-        .map((station, index) => ({ ...station, index }))
-        .filter((station) => !destroyedStations.has(station.index))
-      if (availableStations.length === 0) return
+    const targetZ = target.current.position.z
+    const availableStations = stationData
+      .map((station, index) => {
+        const stationDrop = buildingCollapseDrop(
+          station.buildingIndex,
+          buildingData,
+          damagedBuildings,
+          performance.now() / 1000,
+        )
+        return {
+          ...station,
+          index,
+          launchY: station.position[1] + 3.6 - stationDrop,
+          stationLevel: station.position[1] - stationDrop,
+        }
+      })
+      .filter(
+        (station) =>
+          !destroyedStations.has(station.index) &&
+          Math.abs(station.position[2] - targetZ) < 75,
+      )
+    const directStations = availableStations.filter(
+      (station) => target.current!.position.y >= station.stationLevel,
+    )
+    const newlyTriggeredStations = directStations.filter(
+      (station) => !directFireStations.current.has(station.index),
+    )
+    newlyTriggeredStations.forEach((station) => {
+      directFireStations.current.add(station.index)
+    })
+
+    const launchMissile = (
+      station: (typeof availableStations)[number],
+      targetsFleet: boolean,
+    ) => {
       const index = spawnIndex.current++ % missiles.current.length
-      const station =
-        availableStations[
-          Math.floor(random() * availableStations.length)
-        ]
-      const stationDrop = buildingCollapseDrop(
-        station.buildingIndex,
-        buildingData,
-        damagedBuildings,
-        performance.now() / 1000,
-      )
-      const targetZ = target.current.position.z
-      const missileProtectedBuildings = protectedBuildingIndices(
-        stationData.map((candidate) => candidate.buildingIndex),
-        buildingData.map((building) => building.person !== null),
-      )
-      const possibleImpacts: MissileImpact[] = [
-        ...tankData
-          .map((tank, tankIndex) => ({
-            kind: 'tank' as const,
-            index: tankIndex,
-            position: {
-              x: tank.position[0],
-              y: tank.position[1] + 2.2,
-              z: tank.position[2],
-            },
-          }))
-          .filter((impact) => !destroyedTanks.has(impact.index)),
-        ...buildingData
-          .map((building, buildingIndex) => ({
-            kind: 'building' as const,
-            index: buildingIndex,
-            position: {
-              x: building.position[0],
-              y:
-                building.position[1] +
-                THREE.MathUtils.lerp(
-                  building.scale[1] / 2,
-                  -building.scale[1] / 6,
-                  buildingDamageProgress(
-                    buildingIndex,
-                    damagedBuildings,
-                    performance.now() / 1000,
+      let impact: MissileImpact | null = null
+      let end: { x: number; y: number; z: number }
+      if (targetsFleet) {
+        const currentDistance = Math.hypot(
+          target.current!.position.x - station.position[0],
+          target.current!.position.z - station.position[2],
+        )
+        const estimatedDuration = THREE.MathUtils.clamp(
+          currentDistance / 20,
+          2.6,
+          5.4,
+        )
+        end = {
+          x: target.current!.position.x,
+          y: target.current!.position.y,
+          z:
+            target.current!.position.z -
+            FLEET_FORWARD_SPEED * estimatedDuration,
+        }
+      } else {
+        const missileProtectedBuildings = protectedBuildingIndices(
+          stationData.map((candidate) => candidate.buildingIndex),
+          buildingData.map((building) => building.person !== null),
+        )
+        const possibleImpacts: MissileImpact[] = [
+          ...tankData
+            .map((tank, tankIndex) => ({
+              kind: 'tank' as const,
+              index: tankIndex,
+              position: {
+                x: tank.position[0],
+                y: tank.position[1] + 2.2,
+                z: tank.position[2],
+              },
+            }))
+            .filter((candidate) => !destroyedTanks.has(candidate.index)),
+          ...buildingData
+            .map((building, buildingIndex) => ({
+              kind: 'building' as const,
+              index: buildingIndex,
+              position: {
+                x: building.position[0],
+                y:
+                  building.position[1] +
+                  THREE.MathUtils.lerp(
+                    building.scale[1] / 2,
+                    -building.scale[1] / 6,
+                    buildingDamageProgress(
+                      buildingIndex,
+                      damagedBuildings,
+                      performance.now() / 1000,
+                    ),
                   ),
-                ),
-              z: building.position[2],
-            },
-          }))
-          .filter(
-            (impact) => !missileProtectedBuildings.has(impact.index),
-          ),
-      ]
-      const visibleImpacts = possibleImpacts.filter(
-        (impact) => Math.abs(impact.position.z - targetZ) < 75,
-      )
-      const impactPool =
-        visibleImpacts.length > 0 ? visibleImpacts : possibleImpacts
-      const impact =
-        impactPool[Math.floor(random() * impactPool.length)]
+                z: building.position[2],
+              },
+            }))
+            .filter(
+              (candidate) =>
+                !missileProtectedBuildings.has(candidate.index),
+            ),
+        ]
+        const visibleImpacts = possibleImpacts.filter(
+          (candidate) => Math.abs(candidate.position.z - targetZ) < 75,
+        )
+        const impactPool =
+          visibleImpacts.length > 0 ? visibleImpacts : possibleImpacts
+        impact = impactPool[Math.floor(random() * impactPool.length)] ?? null
+        if (!impact) return
+        end = impact.position
+      }
       const start = {
         x: station.position[0],
-        y: station.position[1] + 3.6 - stationDrop,
+        y: station.launchY,
         z: station.position[2],
       }
       const distance = Math.hypot(
-        impact.position.x - start.x,
-        impact.position.z - start.z,
+        end.x - start.x,
+        end.z - start.z,
       )
-      const peak = Math.max(start.y, impact.position.y) + 13 + random() * 12
+      const peak = Math.max(start.y, end.y) + 13 + random() * 12
       missiles.current[index] = {
         trajectory: {
           start,
           controlA: {
             x: start.x + (random() - 0.5) * 22,
             y: peak,
-            z: start.z + (impact.position.z - start.z) * 0.27,
+            z: start.z + (end.z - start.z) * 0.27,
           },
           controlB: {
-            x: impact.position.x + (random() - 0.5) * 22,
+            x: end.x + (random() - 0.5) * 22,
             y: peak * 0.72,
-            z: start.z + (impact.position.z - start.z) * 0.73,
+            z: start.z + (end.z - start.z) * 0.73,
           },
-          end: impact.position,
+          end,
           duration: THREE.MathUtils.clamp(distance / 20, 2.6, 5.4),
           wobble: random() * 2.4,
         },
         age: 0,
         impact,
+        targetsFleet,
+        previousPosition: start,
       }
     }
+
+    newlyTriggeredStations.forEach((station) => {
+      launchMissile(station, true)
+    })
+    if (spawnClock.current > spawnEvery && availableStations.length > 0) {
+      spawnClock.current = 0
+      const stationPool =
+        directStations.length > 0 ? directStations : availableStations
+      const station =
+        stationPool[Math.floor(random() * stationPool.length)]
+      launchMissile(station, directStations.length > 0)
+    }
+
+    const fleetParts = activeFleetSlots.map((slot) => ({
+      slot,
+      parts: aircraftPartsAt(target.current!, droneOffsets[slot]),
+    }))
+    const hitSlots = new Set<number>()
     missiles.current.forEach((missile, index) => {
       if (!missile.trajectory) {
         meshRefs.current[index]?.position.set(1000, -1000, 1000)
@@ -1130,6 +1201,36 @@ function Missiles({
       const sample = sampleMissileTrajectory(missile.trajectory, missile.age)
       const mesh = meshRefs.current[index]
       if (!mesh) return
+      const previousPosition = missile.previousPosition ?? sample.position
+      const fleetHit = fleetParts.find(
+        ({ slot, parts }) =>
+          !hitSlots.has(slot) &&
+          parts.some(
+            (part) =>
+              segmentPointDistanceSquared(
+                previousPosition,
+                sample.position,
+                part,
+              ) <= 0.85 ** 2,
+          ),
+      )
+      missile.previousPosition = sample.position
+      if (fleetHit) {
+        hitSlots.add(fleetHit.slot)
+        onFleetHit(
+          fleetHit.slot,
+          new THREE.Vector3(
+            sample.position.x,
+            sample.position.y,
+            sample.position.z,
+          ),
+        )
+        missile.trajectory = null
+        missile.impact = null
+        missile.previousPosition = null
+        mesh.position.set(1000, -1000, 1000)
+        return
+      }
       mesh.position.set(
         sample.position.x,
         sample.position.y,
@@ -1144,6 +1245,7 @@ function Missiles({
         if (missile.impact) onImpact(missile.impact)
         missile.trajectory = null
         missile.impact = null
+        missile.previousPosition = null
         mesh.position.set(1000, -1000, 1000)
       }
     })
@@ -1963,6 +2065,16 @@ function Simulation({
         stations={stations}
         tanks={tanks}
         damagedBuildings={damagedBuildings}
+        activeFleetSlots={droneOffsets
+          .map((_, slot) => slot)
+          .filter(
+            (slot) =>
+              !inactiveSlots.has(slot) && !refillingSlots.has(slot),
+          )}
+        onFleetHit={(slot, position) => {
+          if (inactiveSlots.has(slot) || refillingSlots.has(slot)) return
+          destroyFleetSlot(slot, position)
+        }}
         onImpact={(impact) => {
           addImpactExplosion(impact.position)
           if (impact.kind === 'tank') {

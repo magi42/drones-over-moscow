@@ -16,7 +16,11 @@ import {
   isPersonJumpWindow,
   rooftopPersonEdgePlacement,
 } from './rooftopPerson'
-import { sampleMissileTrajectory, type MissileTrajectory } from './missile'
+import {
+  sampleMissileTrajectory,
+  segmentPointDistanceSquared,
+  type MissileTrajectory,
+} from './missile'
 import { mulberry32 } from './random'
 import {
   REPLACEMENT_JOIN_DISTANCE,
@@ -73,6 +77,23 @@ describe('deterministic simulation helpers', () => {
     expect(middle.position.y).toBeGreaterThan(trajectory.end.y)
     expect(impact.position).toEqual(trajectory.end)
     expect(impact.complete).toBe(true)
+  })
+
+  it('detects a drone crossed between two rendered missile positions', () => {
+    expect(
+      segmentPointDistanceSquared(
+        { x: -5, y: 2, z: 0 },
+        { x: 5, y: 2, z: 0 },
+        { x: 0, y: 2.4, z: 0 },
+      ),
+    ).toBeCloseTo(0.16)
+    expect(
+      segmentPointDistanceSquared(
+        { x: -5, y: 2, z: 0 },
+        { x: 5, y: 2, z: 0 },
+        { x: 0, y: 5, z: 0 },
+      ),
+    ).toBe(9)
   })
 
   it('lets a replacement catch and join a fleet slot moving forward', () => {
