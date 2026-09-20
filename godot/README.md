@@ -45,6 +45,22 @@ Only the Ukraine corridor is enabled, matching the current web version. A run
 lasts 72 seconds. Four aircraft fly in formation with twenty replacements in
 reserve.
 
+The native implementation currently includes:
+
+- fixed-duration missions, checkpoints, survivor bonuses, and personal bests;
+- clickable oil tanks and rooftop air-defense stations;
+- queued attack orders and visible replacement aircraft;
+- guided defensive missiles, near misses, and formation damage;
+- building, target, attack-flight, and ground collisions with collapsing structures;
+- physics-driven oil-tank roofs that can damage buildings;
+- pollution clouds, blackened aircraft, and rooftop civilians;
+- textured city scenery and the shared oil-tank roof model from the web game;
+- a seeded 28-row city with 52 apartment blocks, 12 tanks, and 12 rooftop defenses;
+- a native route map, mission briefing, and FP-1 blueprint display;
+- background music and synthesized propeller-engine audio;
+- persistent volume, reduced-effects, and keyboard-binding settings;
+- keyboard, mouse, and controller flight input.
+
 ## Test
 
 ```bash
@@ -54,7 +70,8 @@ make -C godot smoke
 
 ## Linux export
 
-Install the matching Godot export templates, then run:
+In Godot, open **Editor > Manage Export Templates**, install the templates for
+Godot 4.7.1, then run:
 
 ```bash
 make -C godot export-linux
@@ -68,4 +85,6 @@ The executable is written to `build/drones-over-moscow-godot.x86_64`.
 - `scripts/flight_world.gd` owns procedural scenery, flight, attacks, missiles,
   camera movement, and target destruction.
 - `scripts/game_state.gd` owns inventory and scoring rules.
+- `scripts/route_map.gd` and `scripts/drone_blueprint.gd` draw the native
+  mission-selection and briefing visuals.
 - `assets/` contains native project copies of shared source assets.

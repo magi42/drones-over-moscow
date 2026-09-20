@@ -19,6 +19,16 @@ var best_score := 0
 var survivors := STARTING_FORMATION
 var launches_remaining := TOTAL_DRONES
 var run_won := false
+var run_seed := 1
+var master_volume := 0.65
+var reduced_effects := false
+var bindings := {
+	"left": KEY_A,
+	"right": KEY_D,
+	"up": KEY_W,
+	"down": KEY_S,
+	"pause": KEY_ESCAPE,
+}
 
 
 func reset_run() -> void:
@@ -26,6 +36,7 @@ func reset_run() -> void:
 	survivors = STARTING_FORMATION
 	launches_remaining = TOTAL_DRONES
 	run_won = false
+	run_seed = maxi(int(Time.get_unix_time_from_system() * 1000.0), run_seed + 1)
 
 
 func add_score(event: String) -> int:
@@ -51,7 +62,6 @@ func launch_drone() -> Dictionary:
 
 func lose_drone() -> int:
 	survivors = maxi(0, survivors - 1)
-	launches_remaining = maxi(0, launches_remaining - 1)
 	return survivors
 
 
@@ -59,4 +69,3 @@ func finish(won: bool) -> void:
 	run_won = won
 	score += roundi(float(survivors * SCORE_VALUES.survivor) * SCORE_MULTIPLIER)
 	best_score = maxi(best_score, score)
-

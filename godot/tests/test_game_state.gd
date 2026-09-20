@@ -25,6 +25,12 @@ func _init() -> void:
 	state.finish(true)
 	_assert_equal(state.score, 5330, "survivor bonus is applied")
 	_assert_equal(state.best_score, 5330, "best score is recorded")
+
+	state.reset_run()
+	_assert_true(state.run_seed > 1, "a run receives a fresh procedural seed")
+	state.lose_drone()
+	_assert_equal(state.survivors, 3, "combat damage reduces survivors")
+	_assert_equal(state.launches_remaining, 24, "combat damage does not consume a queued launch")
 	print("GAME_STATE_TESTS_OK")
 	quit(0)
 

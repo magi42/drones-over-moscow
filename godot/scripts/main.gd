@@ -1,5 +1,7 @@
 extends Node
 
+const RouteMapControl = preload("res://scripts/route_map.gd")
+const DroneBlueprintControl = preload("res://scripts/drone_blueprint.gd")
 const ACID := Color("#b7f238")
 const CYAN := Color("#72e5d2")
 const INK := Color("#090b0d")
@@ -12,20 +14,44 @@ var flight_world: FlightWorld
 var ui_layer: CanvasLayer
 var hud: Dictionary = {}
 var pause_overlay: Control
+var settings_overlay: Control
+var binding_target := ""
+var binding_buttons: Dictionary = {}
 var music: AudioStreamPlayer
 var phase := "boot"
+var smoke_test_mode := false
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	_load_best_score()
-	_start_music()
-	_show_boot()
 	var user_args := OS.get_cmdline_user_args()
+	smoke_test_mode = "--smoke-test" in user_args
+	if not smoke_test_mode:
+		_load_preferences()
+		_start_music()
+	_show_boot()
+	if "--country-preview" in user_args:
+		_show_country_select()
+		return
+	if "--briefing-preview" in user_args:
+		_show_briefing()
+		return
 	if "--flight-preview" in user_args:
 		_start_run()
 		return
-	if "--smoke-test" in user_args:
+	if smoke_test_mode:
+		_show_operator()
+		_show_settings()
+		if not is_instance_valid(settings_overlay):
+			printerr("SMOKE_TEST_FAILED: settings did not open")
+			get_tree().quit(1)
+			return
+		_close_settings()
+		await get_tree().process_frame
+		_show_country_select()
+		await get_tree().process_frame
+		_show_briefing()
+		await get_tree().process_frame
 		_start_run()
 		await get_tree().process_frame
 		await get_tree().process_frame
@@ -34,9 +60,28 @@ func _ready() -> void:
 			printerr("SMOKE_TEST_FAILED: flight world did not start")
 			get_tree().quit(1)
 			return
-		flight_world._launch_attack(0)
+		var oil_tanks := 0
+		var air_defenses := 0
+		for target in flight_world.targets:
+			if target.kind == "oil_tank":
+				oil_tanks += 1
+			elif target.kind == "air_defense":
+				air_defenses += 1
+		if flight_world.buildings.size() != 52 or oil_tanks != 12 or air_defenses != 12:
+			printerr("SMOKE_TEST_FAILED: city layout counts do not match the web version")
+			get_tree().quit(1)
+			return
+		var previous_reduced_effects := game_state.reduced_effects
+		game_state.reduced_effects = true
+		for target_index in range(5):
+			flight_world._launch_attack(target_index)
 		for _frame in range(240):
 			flight_world._process(1.0 / 60.0)
+		game_state.reduced_effects = previous_reduced_effects
+		if not flight_world.pending_targets.is_empty():
+			printerr("SMOKE_TEST_FAILED: queued attack did not dispatch")
+			get_tree().quit(1)
+			return
 		flight_world._finish_run(true)
 		if phase != "results":
 			printerr("SMOKE_TEST_FAILED: results screen did not open")
@@ -45,6 +90,7 @@ func _ready() -> void:
 		_clear_screen()
 		if is_instance_valid(music):
 			music.stop()
+			music.stream = null
 			music.queue_free()
 		await get_tree().process_frame
 		print("SMOKE_TEST_OK")
@@ -56,7 +102,20 @@ func _ready() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+	if binding_target != "" and event is InputEventKey and event.pressed and not event.echo:
+		var code := int(event.physical_keycode)
+		if code > 0:
+			game_state.bindings[binding_target] = code
+			binding_buttons[binding_target].text = OS.get_keycode_string(code)
+			binding_target = ""
+			_save_preferences()
+			get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and not event.echo and int(event.physical_keycode) == int(game_state.bindings.pause):
+		if is_instance_valid(settings_overlay):
+			_close_settings()
+			get_viewport().set_input_as_handled()
+			return
 		if phase == "flight":
 			_toggle_pause()
 			get_viewport().set_input_as_handled()
@@ -72,6 +131,8 @@ func _start_music() -> void:
 	music.autoplay = true
 	music.finished.connect(music.play)
 	add_child(music)
+	_apply_volume()
+	music.stream_paused = true
 
 
 func _clear_screen() -> void:
@@ -87,6 +148,9 @@ func _clear_screen() -> void:
 	ui_layer = null
 	hud.clear()
 	pause_overlay = null
+	settings_overlay = null
+	binding_target = ""
+	binding_buttons.clear()
 
 
 func _show_boot() -> void:
@@ -122,13 +186,15 @@ func _show_boot() -> void:
 func _show_operator() -> void:
 	_clear_screen()
 	phase = "operator"
+	if is_instance_valid(music):
+		music.stream_paused = false
 	screen = _base_screen(Color("#0c100d"))
 	_add_grid(screen)
 	var title := _label("DRONES over MOSCOW", 64, Color("#edf3ee"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	title.position.y = 45
-	title.size.y = 80
+	title.offset_top = 45
+	title.offset_bottom = 125
 	screen.add_child(title)
 
 	var center := CenterContainer.new()
@@ -156,6 +222,9 @@ func _show_operator() -> void:
 	var accept := _button("ACCEPT MISSION  →")
 	accept.pressed.connect(_show_country_select)
 	content.add_child(accept)
+	var settings := _button("SETTINGS")
+	settings.pressed.connect(_show_settings)
+	content.add_child(settings)
 
 
 func _show_country_select() -> void:
@@ -177,6 +246,19 @@ func _show_country_select() -> void:
 	content.add_child(_label("SELECT LAUNCH CORRIDOR", 50, Color("#e6eee8")))
 	var separator := HSeparator.new()
 	content.add_child(separator)
+	var route_layout := HBoxContainer.new()
+	route_layout.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	route_layout.add_theme_constant_override("separation", 24)
+	content.add_child(route_layout)
+	var route_map := RouteMapControl.new()
+	route_map.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	route_map.ukraine_selected.connect(_show_briefing)
+	route_layout.add_child(route_map)
+	var route_list := VBoxContainer.new()
+	route_list.custom_minimum_size.x = 390
+	route_list.add_theme_constant_override("separation", 8)
+	route_layout.add_child(route_list)
+	route_list.add_child(_label("AVAILABLE CORRIDORS", 13, ACID))
 	var routes := [
 		["01  FINLAND", "NORTH WIND", "LOCKED"],
 		["02  ESTONIA", "PINE NEEDLE", "LOCKED"],
@@ -190,10 +272,10 @@ func _show_country_select() -> void:
 			button.disabled = true
 		else:
 			button.pressed.connect(_show_briefing)
-		content.add_child(button)
+		route_list.add_child(button)
 	var note := _label("FICTIONAL ROUTES · STYLIZED GEOGRAPHY", 12, MUTED)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	content.add_child(note)
+	route_list.add_child(note)
 
 
 func _show_briefing() -> void:
@@ -211,13 +293,8 @@ func _show_briefing() -> void:
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 0)
 	card.add_child(columns)
-	var blueprint := CenterContainer.new()
-	blueprint.custom_minimum_size.x = 455
-	blueprint.add_theme_stylebox_override("panel", _box(Color("#102019"), 0))
+	var blueprint := DroneBlueprintControl.new()
 	columns.add_child(blueprint)
-	var drone_art := _label("      ╱━━━━━━╲\n━━━━━╋━━╋━━━━━\n      ╲━━━━━━╱\n         ║\n      FP-1 × 4", 25, Color("#73c59c"))
-	drone_art.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	blueprint.add_child(drone_art)
 	var copy_margin := MarginContainer.new()
 	copy_margin.custom_minimum_size.x = 480
 	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
@@ -245,6 +322,8 @@ func _show_briefing() -> void:
 func _start_run() -> void:
 	_clear_screen()
 	phase = "flight"
+	if is_instance_valid(music):
+		music.stream_paused = false
 	game_state.reset_run()
 	flight_world = FlightWorld.new()
 	add_child(flight_world)
@@ -352,6 +431,8 @@ func _toggle_pause() -> void:
 	if phase != "flight":
 		return
 	get_tree().paused = not get_tree().paused
+	if is_instance_valid(music):
+		music.stream_paused = get_tree().paused
 	if get_tree().paused:
 		_show_pause_overlay()
 	elif is_instance_valid(pause_overlay):
@@ -381,13 +462,17 @@ func _show_pause_overlay() -> void:
 	var restart := _button("RESTART GAME")
 	restart.pressed.connect(_start_run)
 	menu.add_child(restart)
+	var settings := _button("SETTINGS")
+	settings.pressed.connect(_show_settings)
+	menu.add_child(settings)
 	var main_menu := _button("MAIN SCREEN")
 	main_menu.pressed.connect(_show_operator)
 	menu.add_child(main_menu)
 
 
 func _show_results(_won: bool) -> void:
-	_save_best_score()
+	if not smoke_test_mode:
+		_save_preferences()
 	_clear_screen()
 	phase = "results"
 	screen = _base_screen(Color("#090d0b"))
@@ -419,6 +504,98 @@ func _show_results(_won: bool) -> void:
 	var main_menu := _button("MAIN SCREEN")
 	main_menu.pressed.connect(_show_operator)
 	content.add_child(main_menu)
+
+
+func _show_settings() -> void:
+	if is_instance_valid(settings_overlay) or not is_instance_valid(screen):
+		return
+	settings_overlay = ColorRect.new()
+	settings_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	settings_overlay.color = Color(0.01, 0.015, 0.012, 0.92)
+	settings_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	settings_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(settings_overlay)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	settings_overlay.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(560, 650)
+	panel.add_theme_stylebox_override("panel", _box(PANEL, 2, Color("#435249"), 2))
+	center.add_child(panel)
+	var margin := MarginContainer.new()
+	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		margin.add_theme_constant_override(side, 34)
+	panel.add_child(margin)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 12)
+	margin.add_child(content)
+	content.add_child(_label("SYSTEM", 13, ACID))
+	content.add_child(_label("SETTINGS", 42, Color("#e7eee7")))
+
+	var volume_label := _label("MASTER VOLUME   %d%%" % roundi(game_state.master_volume * 100.0), 15, Color("#cbd5ce"))
+	content.add_child(volume_label)
+	var volume := HSlider.new()
+	volume.min_value = 0.0
+	volume.max_value = 1.0
+	volume.step = 0.05
+	volume.value = game_state.master_volume
+	volume.custom_minimum_size.y = 34
+	volume.value_changed.connect(_on_volume_changed.bind(volume_label))
+	content.add_child(volume)
+
+	var reduced := CheckButton.new()
+	reduced.text = "REDUCED EFFECTS  /  FEWER CLOUDS AND NO DYNAMIC DEBRIS"
+	reduced.button_pressed = game_state.reduced_effects
+	reduced.add_theme_font_size_override("font_size", 13)
+	reduced.toggled.connect(_on_reduced_effects_toggled)
+	content.add_child(reduced)
+	content.add_child(_label("INPUT BINDINGS", 13, MUTED))
+	binding_buttons.clear()
+	for action in ["left", "right", "up", "down", "pause"]:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		var action_label := _label(String(action).to_upper(), 14, Color("#cbd5ce"))
+		action_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(action_label)
+		var binding := _button(OS.get_keycode_string(int(game_state.bindings[action])))
+		binding.custom_minimum_size = Vector2(190, 42)
+		binding.pressed.connect(_listen_for_binding.bind(action))
+		row.add_child(binding)
+		binding_buttons[action] = binding
+		content.add_child(row)
+	var apply := _button("APPLY")
+	apply.pressed.connect(_close_settings)
+	content.add_child(apply)
+
+
+func _listen_for_binding(action: String) -> void:
+	binding_target = action
+	binding_buttons[action].text = "PRESS KEY"
+
+
+func _on_volume_changed(value: float, label: Label) -> void:
+	game_state.master_volume = value
+	label.text = "MASTER VOLUME   %d%%" % roundi(value * 100.0)
+	_apply_volume()
+
+
+func _on_reduced_effects_toggled(enabled: bool) -> void:
+	game_state.reduced_effects = enabled
+
+
+func _close_settings() -> void:
+	if not smoke_test_mode:
+		_save_preferences()
+	binding_target = ""
+	binding_buttons.clear()
+	if is_instance_valid(settings_overlay):
+		settings_overlay.queue_free()
+	settings_overlay = null
+
+
+func _apply_volume() -> void:
+	AudioServer.set_bus_mute(0, game_state.master_volume <= 0.001)
+	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(0.001, game_state.master_volume)))
 
 
 func _base_screen(color: Color) -> Control:
@@ -478,13 +655,21 @@ func _box(color: Color, radius: int, border_color := Color.TRANSPARENT, border_w
 	return box
 
 
-func _load_best_score() -> void:
+func _load_preferences() -> void:
 	var config := ConfigFile.new()
 	if config.load("user://settings.cfg") == OK:
 		game_state.best_score = int(config.get_value("scores", "best", 0))
+		game_state.master_volume = float(config.get_value("settings", "master_volume", 0.65))
+		game_state.reduced_effects = bool(config.get_value("settings", "reduced_effects", false))
+		for action in game_state.bindings.keys():
+			game_state.bindings[action] = int(config.get_value("bindings", action, game_state.bindings[action]))
 
 
-func _save_best_score() -> void:
+func _save_preferences() -> void:
 	var config := ConfigFile.new()
 	config.set_value("scores", "best", game_state.best_score)
+	config.set_value("settings", "master_volume", game_state.master_volume)
+	config.set_value("settings", "reduced_effects", game_state.reduced_effects)
+	for action in game_state.bindings.keys():
+		config.set_value("bindings", action, game_state.bindings[action])
 	config.save("user://settings.cfg")
