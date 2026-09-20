@@ -5,8 +5,7 @@ directory so they can be developed independently.
 
 - [`web/`](web/README.md): the playable browser game, built with React,
   React Three Fiber, Three.js, Rapier, and Zustand.
-- `godot/` (planned): a separate Godot project for native local play, starting
-  with Linux.
+- [`godot/`](godot/README.md): the native Godot 4 project for local Linux play.
 
 ## Run the web game
 
@@ -35,3 +34,12 @@ commands can also be run with `npm --prefix web run build` (or another script).
 
 See the [web project documentation](web/README.md) for gameplay, architecture,
 and release packaging.
+
+## Run the Godot game
+
+```bash
+make -C godot run
+```
+
+See the [Godot project documentation](godot/README.md) for controls, tests, and
+Linux export instructions.

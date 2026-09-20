@@ -7,3 +7,4 @@ test-results
 *.tsbuildinfo
 web/release/
 web/drones-over-moscow.tar.gz
+build/
