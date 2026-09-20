@@ -4,3 +4,6 @@ coverage
 playwright-report
 test-results
 *.local
+*.tsbuildinfo
+web/release/
+web/drones-over-moscow.tar.gz
