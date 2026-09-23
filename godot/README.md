@@ -50,16 +50,21 @@ The native implementation currently includes:
 - fixed-duration missions, checkpoints, survivor bonuses, and personal bests;
 - clickable oil tanks and rooftop air-defense stations;
 - queued attack orders and visible replacement aircraft;
-- guided defensive missiles, near misses, and formation damage;
-- building, target, attack-flight, and ground collisions with collapsing structures;
-- physics-driven oil-tank roofs that can damage buildings;
-- pollution clouds, blackened aircraft, and rooftop civilians;
+- guided defensive missiles with swept collision checks and formation damage;
+- obstacle-clearing strike paths and whole-aircraft structure collisions;
+- physics-driven oil-tank roofs that can damage buildings and aircraft;
+- pollution clouds with dark rain, blackened aircraft, and timed rooftop jumps
+  with retreating companions;
 - textured city scenery and the shared oil-tank roof model from the web game;
+- apartment roof equipment and persistent damaged remains for destroyed targets;
 - a seeded 28-row city with 52 apartment blocks, 12 tanks, and 12 rooftop defenses;
-- a native route map, mission briefing, and FP-1 blueprint display;
+- a native operator room, route map, mission briefing, and FP-1 blueprint display;
 - background music and synthesized propeller-engine audio;
 - persistent volume, reduced-effects, and keyboard-binding settings;
 - keyboard, mouse, and controller flight input.
+
+Godot currently renders the full city throughout a run. Keep this behavior
+unless profiling shows that row culling is needed.
 
 ## Test
 

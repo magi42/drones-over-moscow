@@ -12,6 +12,7 @@ run:
 
 test:
 	$(GODOT) --headless --path "$(CURDIR)" --script res://tests/test_game_state.gd
+	$(GODOT) --headless --path "$(CURDIR)" --script res://tests/test_flight_math.gd
 
 smoke:
 	$(GODOT) --headless --path "$(CURDIR)" -- --smoke-test

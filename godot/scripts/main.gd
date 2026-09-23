@@ -2,6 +2,7 @@ extends Node
 
 const RouteMapControl = preload("res://scripts/route_map.gd")
 const DroneBlueprintControl = preload("res://scripts/drone_blueprint.gd")
+const OperatorRoomControl = preload("res://scripts/operator_room.gd")
 const ACID := Color("#b7f238")
 const CYAN := Color("#72e5d2")
 const INK := Color("#090b0d")
@@ -30,6 +31,9 @@ func _ready() -> void:
 		_load_preferences()
 		_start_music()
 	_show_boot()
+	if "--operator-preview" in user_args:
+		_show_operator()
+		return
 	if "--country-preview" in user_args:
 		_show_country_select()
 		return
@@ -71,8 +75,37 @@ func _ready() -> void:
 			printerr("SMOKE_TEST_FAILED: city layout counts do not match the web version")
 			get_tree().quit(1)
 			return
+		if flight_world.rooftop_people.is_empty():
+			printerr("SMOKE_TEST_FAILED: rooftop civilians were not created")
+			get_tree().quit(1)
+			return
+		var first_person: Dictionary = flight_world.rooftop_people[0]
+		first_person.jump_delay = 0.0
+		flight_world.rooftop_people[0] = first_person
+		var original_fleet_z: float = flight_world.formation.position.z
+		var person_building: Dictionary = flight_world.buildings[int(first_person.building_index)]
+		var jump_row := int(person_building.row) - int(first_person.jump_ahead)
+		flight_world.formation.position.z = FlightWorld.CITY_FIRST_ROW_Z - float(jump_row) * FlightWorld.CITY_ROW_SPACING
+		flight_world._update_rooftop_people(1.0 / 60.0)
+		flight_world.formation.position.z = original_fleet_z
+		if flight_world.rooftop_people[0].phase != "jumping":
+			printerr("SMOKE_TEST_FAILED: rooftop jump did not begin in its row window")
+			get_tree().quit(1)
+			return
 		var previous_reduced_effects := game_state.reduced_effects
 		game_state.reduced_effects = true
+		var untouched_tank := 6
+		flight_world._destroy_target(untouched_tank, false)
+		var tank: Dictionary = flight_world.targets[untouched_tank]
+		if not tank.node.visible or not tank.body.visible or tank.destroyable_visuals[1].visible or flight_world.pollution_clouds.is_empty():
+			printerr("SMOKE_TEST_FAILED: destroyed tank aftermath is incomplete")
+			get_tree().quit(1)
+			return
+		var cloud: Dictionary = flight_world.pollution_clouds[0]
+		if cloud.rain.multimesh.instance_count != 28:
+			printerr("SMOKE_TEST_FAILED: reduced-effects pollution rain is missing")
+			get_tree().quit(1)
+			return
 		for target_index in range(5):
 			flight_world._launch_attack(target_index)
 		for _frame in range(240):
@@ -189,7 +222,9 @@ func _show_operator() -> void:
 	if is_instance_valid(music):
 		music.stream_paused = false
 	screen = _base_screen(Color("#0c100d"))
-	_add_grid(screen)
+	var room := OperatorRoomControl.new()
+	room.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(room)
 	var title := _label("DRONES over MOSCOW", 64, Color("#edf3ee"))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -419,12 +454,13 @@ func _update_hud(data: Dictionary) -> void:
 		return
 	hud.score.text = "SCORE  %07d" % int(data.score)
 	hud.altitude.text = "ALT\n%dm" % int(data.altitude)
-	hud.status.text = "ATTACK LINK\n%d DRONE%s IN FLIGHT" % [int(data.attacks), "S" if int(data.attacks) != 1 else ""] if int(data.attacks) > 0 else "AIR DEFENSE\n%d/%d DESTROYED · CLICK A TARGET" % [int(data.stations_destroyed), int(data.stations_total)]
+	hud.status.text = "ATTACK LINK\nDRONE INTERCEPT IN PROGRESS" if int(data.attacks) > 0 else "AIR DEFENSE\n%d/%d DESTROYED · CLICK A TARGET" % [int(data.stations_destroyed), int(data.stations_total)]
 	hud.progress.value = float(data.progress) * 100.0
 	var pips := ""
 	for slot in data.slots:
 		pips += "◆ " if slot == "READY" else ("◇ " if slot == "REFILL" else "× ")
-	hud.formation.text = "FP-1 FLEET\n%s\n%d/4 DRONES\n%d LAUNCHES AVAILABLE" % [pips.strip_edges(), int(data.survivors), int(data.launches)]
+	var queued := "\n%d ATTACKS QUEUED" % int(data.queued) if int(data.queued) > 0 else ""
+	hud.formation.text = "FP-1 FLEET\n%s\n%d/4 DRONES\n%d LAUNCHES AVAILABLE%s" % [pips.strip_edges(), int(data.survivors), int(data.launches), queued]
 
 
 func _toggle_pause() -> void:
