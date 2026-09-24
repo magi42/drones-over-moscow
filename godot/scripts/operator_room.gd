@@ -1,6 +1,8 @@
 class_name OperatorRoom
 extends Control
 
+const MONO_FONT = preload("res://assets/fonts/ibm_plex_mono/IBMPlexMono-Regular.ttf")
+
 var sweep_angle := 0.0
 
 
@@ -24,7 +26,7 @@ func _draw() -> void:
 	_draw_monitor(Rect2(width * 0.015, height * 0.30, width * 0.22, height * 0.40), Color("#0a1b13"))
 	_draw_monitor(Rect2(width * 0.765, height * 0.30, width * 0.22, height * 0.40), Color("#111c15"))
 	_draw_monitor(Rect2(width * 0.225, height * 0.18, width * 0.55, height * 0.56), Color("#0a1510"))
-	var font := ThemeDB.fallback_font
+	var font := MONO_FONT
 	var left_center := Vector2(width * 0.125, height * 0.49)
 	for radius in [33.0, 61.0, 91.0]:
 		draw_arc(left_center, radius, 0.0, TAU, 48, Color("#315d40"), 1.0)

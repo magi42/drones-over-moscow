@@ -5,6 +5,7 @@ signal hud_changed(data: Dictionary)
 signal run_finished(won: bool)
 
 const FlightMathRules = preload("res://scripts/flight_math.gd")
+const WebRandomRules = preload("res://scripts/web_random.gd")
 const FORWARD_SPEED := 3.05
 const FORMATION_OFFSETS := [
 	Vector3(0.0, 0.0, 0.0),
@@ -66,11 +67,13 @@ var damage_cooldown := 0.0
 var near_miss_clock := 11.5
 var periodic_score_index := 1
 var rng := RandomNumberGenerator.new()
+var city_rng
 
 
 func setup(game_state: GameState) -> void:
 	state = game_state
 	rng.seed = state.run_seed
+	city_rng = WebRandomRules.new(state.run_seed)
 	ground_texture = load("res://assets/textures/texture-ground.jpg")
 	wall_textures = [
 		load("res://assets/textures/texture-house-wall-10-storeys-white.jpg"),
@@ -136,8 +139,20 @@ func _unhandled_input(event: InputEvent) -> void:
 func _build_environment() -> void:
 	var world_environment := WorldEnvironment.new()
 	var environment := Environment.new()
-	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color("#9baaa5")
+	var sky_material := ProceduralSkyMaterial.new()
+	sky_material.sky_top_color = Color("#66787b")
+	sky_material.sky_horizon_color = Color("#a9b7b1")
+	sky_material.sky_curve = 0.22
+	sky_material.ground_bottom_color = Color("#4f5d58")
+	sky_material.ground_horizon_color = Color("#909f98")
+	sky_material.ground_curve = 0.18
+	sky_material.sun_angle_max = 7.0
+	sky_material.sun_curve = 0.12
+	var sky := Sky.new()
+	sky.sky_material = sky_material
+	environment.background_mode = Environment.BG_SKY
+	environment.sky = sky
+	environment.background_energy_multiplier = 0.9
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color("#adc0b6")
 	environment.ambient_light_energy = 0.62
@@ -172,8 +187,9 @@ func _build_environment() -> void:
 
 
 func _build_storm_field() -> void:
-	if state.reduced_effects:
+	if state.reduced_effects or is_instance_valid(storm_rain):
 		return
+	storm_drops.clear()
 	storm_rain = MultiMeshInstance3D.new()
 	storm_rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var rain_mesh := BoxMesh.new()
@@ -204,6 +220,29 @@ func _build_storm_field() -> void:
 	_update_storm(0.0)
 
 
+func set_reduced_effects(enabled: bool) -> void:
+	state.reduced_effects = enabled
+	if enabled:
+		if is_instance_valid(storm_rain):
+			storm_rain.visible = false
+			storm_rain.queue_free()
+		storm_rain = null
+		storm_drops.clear()
+		for lid in tank_lids:
+			if is_instance_valid(lid):
+				lid.queue_free()
+		tank_lids.clear()
+	else:
+		_build_storm_field()
+	for cloud in pollution_clouds:
+		var blobs: Array = cloud.blobs
+		for blob_index in range(blobs.size()):
+			if is_instance_valid(blobs[blob_index]):
+				blobs[blob_index].visible = not enabled or blob_index < 7
+		var rain: MultiMeshInstance3D = cloud.rain
+		rain.multimesh.visible_instance_count = 28 if enabled else -1
+
+
 func _update_storm(delta: float) -> void:
 	if not is_instance_valid(storm_rain):
 		return
@@ -220,7 +259,6 @@ func _update_storm(delta: float) -> void:
 
 
 func _build_city() -> void:
-	var colors := [Color("#9a9184"), Color("#7f8984"), Color("#a39d8e"), Color("#777b72")]
 	var cells: Array[Dictionary] = []
 	for row in range(28):
 		for column in range(CITY_COLUMNS.size()):
@@ -229,8 +267,9 @@ func _build_city() -> void:
 				"z": CITY_FIRST_ROW_Z - float(row) * CITY_ROW_SPACING,
 				"row": row,
 				"column": column,
+				"sort": city_rng.next(),
 			})
-	_shuffle_cells(cells)
+	cells.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.sort) < float(b.sort))
 
 	var tank_cells: Array[Dictionary] = []
 	var building_candidates: Array[Dictionary] = []
@@ -244,7 +283,7 @@ func _build_city() -> void:
 	for band in range(3):
 		var count := 0
 		for cell in building_candidates:
-			if int(cell.row) / 10 == band:
+			if floori(float(cell.row) / 10.0) == band:
 				station_cells.append(cell)
 				count += 1
 				if count == 4:
@@ -262,28 +301,48 @@ func _build_city() -> void:
 			building_cells.append(cell)
 
 	var station_buildings: Array[int] = []
+	var upper_colors := [Color("#d94c4c"), Color("#315fbd"), Color("#d7a92f"), Color("#4f8f59")]
+	var lower_colors := [Color("#26334d"), Color("#4a382f"), Color("#2f493c"), Color("#4b355b")]
 	for building_index in range(building_cells.size()):
 		var cell := building_cells[building_index]
-		var storey_roll := rng.randf()
+		var storey_roll: float = city_rng.next()
 		var storeys := 10 if storey_roll < 0.4 else (11 if storey_roll < 0.7 else 15)
 		var height := 1.8 + float(storeys) * 1.6
 		var size := Vector3(13.4, height, 9.0)
+		var person_config := {}
+		if building_index % 2 == 0:
+			var edge := "player"
+			if not is_zero_approx(float(cell.x)):
+				edge = "player" if city_rng.next() < 0.5 else "center"
+			var jump_options: Array[int] = [2, 3]
+			if int(cell.row) >= 4:
+				jump_options.append(4)
+			var jump_index := mini(floori(city_rng.next() * jump_options.size()), jump_options.size() - 1)
+			var jump_delay: float = CITY_ROW_SPACING / FORWARD_SPEED * (0.12 + city_rng.next() * 0.72)
+			var upper_index := mini(floori(city_rng.next() * upper_colors.size()), upper_colors.size() - 1)
+			var lower_index := mini(floori(city_rng.next() * lower_colors.size()), lower_colors.size() - 1)
+			person_config = {
+				"edge": edge,
+				"jump_ahead": jump_options[jump_index],
+				"jump_delay": jump_delay,
+				"upper_color": upper_colors[upper_index],
+				"lower_color": lower_colors[lower_index],
+				"edge_offset": (city_rng.next() - 0.5) * 0.72,
+				"has_companions": city_rng.next() < 0.75,
+			}
 		var building := MeshInstance3D.new()
 		var box := BoxMesh.new()
 		box.size = size
 		building.mesh = box
 		building.position = Vector3(float(cell.x), -3.0 + height * 0.5, float(cell.z))
-		building.rotation.y = PI if rng.randf() > 0.5 else 0.0
-		building.material_override = _building_material(
-			colors[rng.randi_range(0, colors.size() - 1)],
-			storeys
-		)
+		building.rotation.y = PI if city_rng.next() > 0.5 else 0.0
+		building.material_override = _building_material(Color.WHITE, storeys)
 		add_child(building)
 		var collision := _add_static_collision(building.position, size)
 		collision.rotation.y = building.rotation.y
 		collision.set_meta("building_index", building_index)
 		var has_station := building_index < station_cells.size()
-		var has_person := building_index % 2 == 0 and not has_station
+		var has_person := not person_config.is_empty() and not has_station
 		buildings.append({
 			"node": building,
 			"collision": collision,
@@ -311,7 +370,7 @@ func _build_city() -> void:
 		if has_station:
 			station_buildings.append(building_index)
 		elif has_person:
-			_add_rooftop_person(building_index)
+			_add_rooftop_person(building_index, person_config)
 
 	for cell in tank_cells:
 		_create_tank(Vector3(float(cell.x), 1.5, float(cell.z)))
@@ -324,7 +383,7 @@ func _build_cross_roads() -> void:
 	var road_material := _material(Color("#171a19"), 0.9)
 	var marker_material := _material(Color("#d9b566"), 0.7)
 	marker_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var road_row := 3 + floori(rng.randf() * 3.0)
+	var road_row := 3 + floori(city_rng.next() * 3.0)
 	while road_row < 28:
 		var road_root := Node3D.new()
 		road_root.position.z = CITY_FIRST_ROW_Z - float(road_row) * CITY_ROW_SPACING + 7.5
@@ -345,15 +404,7 @@ func _build_cross_roads() -> void:
 			marker.position = Vector3(-152.0 + float(marker_index) * 16.0, -2.88, 0.0)
 			marker.material_override = marker_material
 			road_root.add_child(marker)
-		road_row += 1 + floori(rng.randf() * 3.0)
-
-
-func _shuffle_cells(cells: Array[Dictionary]) -> void:
-	for index in range(cells.size() - 1, 0, -1):
-		var swap_index := rng.randi_range(0, index)
-		var temporary := cells[index]
-		cells[index] = cells[swap_index]
-		cells[swap_index] = temporary
+		road_row += 1 + floori(city_rng.next() * 3.0)
 
 
 func _add_static_collision(position: Vector3, size: Vector3) -> StaticBody3D:
@@ -368,29 +419,24 @@ func _add_static_collision(position: Vector3, size: Vector3) -> StaticBody3D:
 	return body
 
 
-func _add_rooftop_person(building_index: int) -> void:
+func _add_rooftop_person(building_index: int, config: Dictionary) -> void:
 	var building: Dictionary = buildings[building_index]
 	var building_position: Vector3 = building.position
 	var building_size: Vector3 = building.size
-	var edge := "player" if is_zero_approx(building_position.x) or rng.randf() < 0.5 else "center"
-	var edge_offset := rng.randf_range(-0.36, 0.36)
+	var edge: String = config.edge
+	var edge_offset: float = config.edge_offset
 	var placement: Dictionary = FlightMathRules.rooftop_edge_placement(
 		edge, building_position.x, building_size.x, building_size.z, edge_offset
 	)
 	var offset: Vector2 = placement.offset
 	var direction: Vector2 = placement.direction
 	var start := building_position + Vector3(offset.x, building_size.y * 0.5 + 1.05, offset.y)
-	var upper_colors := [Color("#d94c4c"), Color("#315fbd"), Color("#d7a92f"), Color("#4f8f59")]
-	var lower_colors := [Color("#26334d"), Color("#4a382f"), Color("#2f493c"), Color("#4b355b")]
-	var person := _make_rooftop_figure(
-		upper_colors[rng.randi_range(0, upper_colors.size() - 1)],
-		lower_colors[rng.randi_range(0, lower_colors.size() - 1)]
-	)
+	var person := _make_rooftop_figure(config.upper_color, config.lower_color)
 	person.position = start
 	person.rotation.y = atan2(direction.x, direction.y)
 	add_child(person)
 	var helpers: Array[Dictionary] = []
-	if rng.randf() < 0.75:
+	if bool(config.has_companions):
 		var forward := direction.normalized()
 		var side := Vector2(-forward.y, forward.x)
 		for side_amount in [-0.42, 0.42]:
@@ -406,10 +452,6 @@ func _add_rooftop_person(building_index: int) -> void:
 			helper.rotation.y = person.rotation.y + PI
 			add_child(helper)
 			helpers.append({"node": helper, "start": helper_start, "target": helper_target})
-	var jump_options: Array[int] = [2, 3, 4]
-	if int(building.row) < 4:
-		jump_options.erase(4)
-	var jump_ahead: int = jump_options[rng.randi_range(0, jump_options.size() - 1)]
 	rooftop_people.append({
 		"node": person,
 		"building_index": building_index,
@@ -417,8 +459,8 @@ func _add_rooftop_person(building_index: int) -> void:
 		"origin": start,
 		"direction": direction,
 		"velocity": Vector3.ZERO,
-		"jump_ahead": jump_ahead,
-		"jump_delay": CITY_ROW_SPACING / FORWARD_SPEED * rng.randf_range(0.12, 0.84),
+		"jump_ahead": int(config.jump_ahead),
+		"jump_delay": float(config.jump_delay),
 		"window_elapsed": 0.0,
 		"phase_elapsed": 0.0,
 		"helper_elapsed": 0.0,
@@ -1181,21 +1223,34 @@ func _set_target_indicator(target_index: int, targeted: bool) -> void:
 
 
 func _spawn_explosion(position: Vector3) -> void:
-	var flash := MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	sphere.radius = 1.2
-	sphere.height = 2.4
-	flash.mesh = sphere
-	flash.position = position
-	var material := _material(Color("#ff9d24"), 0.25, Color("#ff5d16"))
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	flash.material_override = material
-	add_child(flash)
+	var explosion := Node3D.new()
+	explosion.position = position
+	add_child(explosion)
+	var materials: Array[StandardMaterial3D] = []
+	for layer in range(2):
+		var flash := MeshInstance3D.new()
+		var shape := SphereMesh.new()
+		shape.radius = 1.2
+		shape.height = 2.4
+		shape.radial_segments = 8
+		shape.rings = 4
+		flash.mesh = shape
+		flash.scale = Vector3.ONE * (1.0 if layer == 0 else 0.62)
+		var color := Color("#ffb12b") if layer == 0 else Color("#fff0b3")
+		var material := _material(color, 0.25, color)
+		material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		flash.material_override = material
+		explosion.add_child(flash)
+		materials.append(material)
 	var tween := create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(flash, "scale", Vector3.ONE * (4.0 if state.reduced_effects else 7.0), 0.7)
-	tween.tween_property(material, "albedo_color:a", 0.0, 0.7)
-	tween.chain().tween_callback(flash.queue_free)
+	tween.tween_property(explosion, "scale", Vector3.ONE * (4.0 if state.reduced_effects else 6.0), 1.5)
+	tween.tween_property(explosion, "rotation:y", 2.7, 1.5)
+	for material in materials:
+		tween.tween_property(material, "albedo_color:a", 0.0, 1.5)
+		tween.tween_property(material, "emission:a", 0.0, 1.5)
+	tween.chain().tween_callback(explosion.queue_free)
 
 
 func _spawn_tank_aftermath(position: Vector3) -> void:
@@ -1249,8 +1304,8 @@ func _spawn_pollution_cloud(position: Vector3) -> void:
 	cloud.position.y = 23.0
 	cloud.scale = Vector3.ONE * 0.15
 	cloud_root.add_child(cloud)
-	var blob_count := 7 if state.reduced_effects else 14
-	for _index in range(blob_count):
+	var blobs: Array[MeshInstance3D] = []
+	for blob_index in range(14):
 		var blob := MeshInstance3D.new()
 		var sphere := SphereMesh.new()
 		sphere.radius = 1.0
@@ -1270,7 +1325,9 @@ func _spawn_pollution_cloud(position: Vector3) -> void:
 		smoke.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		smoke.emission_energy_multiplier = 0.25
 		blob.material_override = smoke
+		blob.visible = not state.reduced_effects or blob_index < 7
 		cloud.add_child(blob)
+		blobs.append(blob)
 	var rain := MultiMeshInstance3D.new()
 	var rain_mesh := CylinderMesh.new()
 	rain_mesh.top_radius = 0.025
@@ -1283,8 +1340,9 @@ func _spawn_pollution_cloud(position: Vector3) -> void:
 	var multi := MultiMesh.new()
 	multi.transform_format = MultiMesh.TRANSFORM_3D
 	multi.mesh = rain_mesh
-	var drop_count := 28 if state.reduced_effects else 80
+	var drop_count := 80
 	multi.instance_count = drop_count
+	multi.visible_instance_count = 28 if state.reduced_effects else -1
 	rain.multimesh = multi
 	cloud_root.add_child(rain)
 	var drops: Array[Dictionary] = []
@@ -1301,6 +1359,7 @@ func _spawn_pollution_cloud(position: Vector3) -> void:
 		"node": cloud,
 		"age": 0.0,
 		"radius": 11.0,
+		"blobs": blobs,
 		"rain": rain,
 		"drops": drops,
 	})

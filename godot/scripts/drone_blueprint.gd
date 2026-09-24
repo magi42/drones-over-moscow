@@ -1,6 +1,8 @@
 class_name DroneBlueprint
 extends Control
 
+const MONO_FONT = preload("res://assets/fonts/ibm_plex_mono/IBMPlexMono-Regular.ttf")
+
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(455, 470)
@@ -34,6 +36,6 @@ func _draw() -> void:
 	draw_line(center + Vector2(0, -112), center + Vector2(0, 116), Color(ink, 0.35), 1.0)
 	for point in [Vector2(-150, -10), Vector2(150, -10), Vector2(-124, 21), Vector2(124, 21)]:
 		draw_arc(center + point, 26.0, 0.0, TAU, 32, ink, 2.0)
-	var font := ThemeDB.fallback_font
+	var font := MONO_FONT
 	draw_string(font, Vector2(24, 36), "FP-1 / PLAN VIEW", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ink)
 	draw_string(font, Vector2(24, size.y - 28), "4 ACTIVE AIRCRAFT  ·  20 RESERVES", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#668a76"))

@@ -4,6 +4,10 @@ const RouteMapControl = preload("res://scripts/route_map.gd")
 const DroneBlueprintControl = preload("res://scripts/drone_blueprint.gd")
 const OperatorRoomControl = preload("res://scripts/operator_room.gd")
 const BootTerminalControl = preload("res://scripts/boot_terminal.gd")
+const ScreenEffectsControl = preload("res://scripts/screen_effects.gd")
+const HEADLINE_FONT = preload("res://assets/fonts/barlow_condensed/BarlowCondensed-SemiBold.ttf")
+const MONO_FONT = preload("res://assets/fonts/ibm_plex_mono/IBMPlexMono-Regular.ttf")
+const MONO_MEDIUM_FONT = preload("res://assets/fonts/ibm_plex_mono/IBMPlexMono-Medium.ttf")
 const ACID := Color("#b7f238")
 const CYAN := Color("#72e5d2")
 const INK := Color("#090b0d")
@@ -71,6 +75,10 @@ func _ready() -> void:
 			printerr("SMOKE_TEST_FAILED: flight world did not start")
 			get_tree().quit(1)
 			return
+		if screen.get_node_or_null("FlightEffects") == null:
+			printerr("SMOKE_TEST_FAILED: flight presentation overlay did not load")
+			get_tree().quit(1)
+			return
 		var oil_tanks := 0
 		var air_defenses := 0
 		for target in flight_world.targets:
@@ -83,6 +91,19 @@ func _ready() -> void:
 			get_tree().quit(1)
 			return
 		var first_tank: Dictionary = flight_world.targets[0]
+		var first_building: Dictionary = flight_world.buildings[0]
+		if (
+			not is_equal_approx(float(first_tank.node.position.x), 24.0)
+			or not is_equal_approx(float(first_tank.node.position.z), -22.0)
+			or int(first_building.row) != 3
+			or not is_equal_approx(float(first_building.position.x), 24.0)
+			or not is_equal_approx(float(first_building.size.y), 19.4)
+			or flight_world.cross_roads.size() != 12
+			or not is_equal_approx(float(flight_world.cross_roads[0].position.z), -59.5)
+		):
+			printerr("SMOKE_TEST_FAILED: seed 42 city layout differs from the web version")
+			get_tree().quit(1)
+			return
 		var tank_mesh := first_tank.body.mesh as CylinderMesh
 		var first_station: Dictionary = flight_world.targets[oil_tanks]
 		if (
@@ -120,7 +141,11 @@ func _ready() -> void:
 			get_tree().quit(1)
 			return
 		var previous_reduced_effects := game_state.reduced_effects
-		game_state.reduced_effects = true
+		_on_reduced_effects_toggled(true)
+		if is_instance_valid(flight_world.storm_rain):
+			printerr("SMOKE_TEST_FAILED: reduced effects did not remove the storm field")
+			get_tree().quit(1)
+			return
 		var untouched_tank := 6
 		flight_world._destroy_target(untouched_tank, false)
 		var tank: Dictionary = flight_world.targets[untouched_tank]
@@ -129,7 +154,12 @@ func _ready() -> void:
 			get_tree().quit(1)
 			return
 		var cloud: Dictionary = flight_world.pollution_clouds[0]
-		if cloud.rain.multimesh.instance_count != 28:
+		if (
+			cloud.blobs.size() != 14
+			or cloud.blobs[7].visible
+			or cloud.rain.multimesh.instance_count != 80
+			or cloud.rain.multimesh.visible_instance_count != 28
+		):
 			printerr("SMOKE_TEST_FAILED: reduced-effects pollution rain is missing")
 			get_tree().quit(1)
 			return
@@ -173,7 +203,15 @@ func _ready() -> void:
 			flight_world._launch_attack(target_index)
 		for _frame in range(240):
 			flight_world._physics_process(1.0 / 60.0)
-		game_state.reduced_effects = previous_reduced_effects
+		_on_reduced_effects_toggled(previous_reduced_effects)
+		if not previous_reduced_effects and not is_instance_valid(flight_world.storm_rain):
+			printerr("SMOKE_TEST_FAILED: disabling reduced effects did not restore weather particles")
+			get_tree().quit(1)
+			return
+		if not previous_reduced_effects and (not cloud.blobs[7].visible or cloud.rain.multimesh.visible_instance_count != -1):
+			printerr("SMOKE_TEST_FAILED: disabling reduced effects did not restore cloud detail")
+			get_tree().quit(1)
+			return
 		if not flight_world.pending_targets.is_empty():
 			printerr("SMOKE_TEST_FAILED: queued attack did not dispatch")
 			get_tree().quit(1)
@@ -412,12 +450,33 @@ func _show_briefing() -> void:
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(center)
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(940, 560)
+	card.custom_minimum_size = Vector2(980, 600)
 	card.add_theme_stylebox_override("panel", _box(Color("#09110d"), 1, Color("#3c4a42"), 2))
 	center.add_child(card)
+	var card_content := VBoxContainer.new()
+	card_content.add_theme_constant_override("separation", 0)
+	card.add_child(card_content)
+	var dossier_margin := MarginContainer.new()
+	dossier_margin.custom_minimum_size.y = 42
+	dossier_margin.add_theme_constant_override("margin_left", 18)
+	dossier_margin.add_theme_constant_override("margin_right", 18)
+	dossier_margin.add_theme_constant_override("margin_top", 11)
+	dossier_margin.add_theme_constant_override("margin_bottom", 9)
+	card_content.add_child(dossier_margin)
+	var dossier_header := HBoxContainer.new()
+	dossier_margin.add_child(dossier_header)
+	var dossier_title := _label("MISSION DOSSIER / SUNFLOWER", 11, MUTED)
+	dossier_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dossier_header.add_child(dossier_title)
+	var classified := _label("CLASSIFIED // FICTIONAL", 11, MUTED)
+	classified.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	dossier_header.add_child(classified)
+	var dossier_separator := HSeparator.new()
+	card_content.add_child(dossier_separator)
 	var columns := HBoxContainer.new()
 	columns.add_theme_constant_override("separation", 0)
-	card.add_child(columns)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card_content.add_child(columns)
 	var blueprint := DroneBlueprintControl.new()
 	columns.add_child(blueprint)
 	var copy_margin := MarginContainer.new()
@@ -442,6 +501,11 @@ func _show_briefing() -> void:
 	var launch := _button("LAUNCH FP-1 FORMATION  ↗")
 	launch.pressed.connect(_start_run)
 	copy.add_child(launch)
+	var scanlines := ScreenEffectsControl.new()
+	scanlines.draw_scanlines = true
+	scanlines.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	scanlines.z_index = 20
+	screen.add_child(scanlines)
 
 
 func _start_run() -> void:
@@ -451,6 +515,8 @@ func _start_run() -> void:
 	if is_instance_valid(music):
 		music.stream_paused = false
 	game_state.reset_run()
+	if smoke_test_mode:
+		game_state.run_seed = 42
 	flight_world = FlightWorld.new()
 	add_child(flight_world)
 	flight_world.hud_changed.connect(_update_hud)
@@ -467,6 +533,12 @@ func _build_hud() -> void:
 	screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	screen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	ui_layer.add_child(screen)
+	var flight_effects := ScreenEffectsControl.new()
+	flight_effects.name = "FlightEffects"
+	flight_effects.draw_vignette = true
+	flight_effects.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(flight_effects)
+	hud.effects = flight_effects
 
 	var top := HBoxContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -490,20 +562,38 @@ func _build_hud() -> void:
 	top.add_child(pause)
 
 	hud.altitude = _label("ALT\n170m", 19, Color("#e7eee7"))
-	hud.altitude.position = Vector2(30, 118)
-	hud.altitude.size = Vector2(120, 70)
+	hud.altitude.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	hud.altitude.offset_left = -170
+	hud.altitude.offset_right = -34
+	hud.altitude.offset_top = 265
+	hud.altitude.offset_bottom = 335
+	hud.altitude.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	screen.add_child(hud.altitude)
 
-	hud.status = _label("AIR DEFENSE\n0/0 DESTROYED · CLICK A TARGET", 14, ACID)
-	hud.status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hud.status.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	hud.status.offset_top = 96
-	hud.status.offset_bottom = 148
-	screen.add_child(hud.status)
+	hud.status_panel = PanelContainer.new()
+	hud.status_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	hud.status_panel.offset_left = -340
+	hud.status_panel.offset_right = -34
+	hud.status_panel.offset_top = 108
+	hud.status_panel.offset_bottom = 172
+	hud.status_panel.add_theme_stylebox_override("panel", _box(Color(0.02, 0.04, 0.03, 0.55), 1, Color(0.75, 0.82, 0.78, 0.38), 2))
+	screen.add_child(hud.status_panel)
+	var status_margin := MarginContainer.new()
+	status_margin.add_theme_constant_override("margin_left", 14)
+	status_margin.add_theme_constant_override("margin_right", 14)
+	status_margin.add_theme_constant_override("margin_top", 8)
+	status_margin.add_theme_constant_override("margin_bottom", 8)
+	hud.status_panel.add_child(status_margin)
+	hud.status = _label("AIR DEFENSE\n0/0 DESTROYED · CLICK A TARGET", 12, Color("#e7eee7"))
+	hud.status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	status_margin.add_child(hud.status)
 
 	var formation_panel := PanelContainer.new()
-	formation_panel.position = Vector2(28, 500)
-	formation_panel.size = Vector2(280, 140)
+	formation_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	formation_panel.offset_left = 28
+	formation_panel.offset_right = 308
+	formation_panel.offset_top = -220
+	formation_panel.offset_bottom = -80
 	formation_panel.add_theme_stylebox_override("panel", _box(Color(0.03, 0.06, 0.05, 0.82), 1, Color("#415047"), 1))
 	screen.add_child(formation_panel)
 	var formation_margin := MarginContainer.new()
@@ -533,8 +623,10 @@ func _build_hud() -> void:
 	progress_row.add_child(_label("EXTRACT", 11, MUTED))
 
 	var controls := _label("WASD / LEFT STICK   FORMATION CONTROL    ·    MOUSE CLICK   ATTACK STATION OR OIL TANK", 12, Color("#c4d0c7"))
-	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	controls.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	controls.offset_left = 650
+	controls.offset_right = -32
 	controls.offset_top = -38
 	controls.offset_bottom = -12
 	screen.add_child(controls)
@@ -545,7 +637,15 @@ func _update_hud(data: Dictionary) -> void:
 		return
 	hud.score.text = "SCORE  %07d" % int(data.score)
 	hud.altitude.text = "ALT\n%dm" % int(data.altitude)
-	hud.status.text = "ATTACK LINK\nDRONE INTERCEPT IN PROGRESS" if int(data.attacks) > 0 else "AIR DEFENSE\n%d/%d DESTROYED · CLICK A TARGET" % [int(data.stations_destroyed), int(data.stations_total)]
+	var attack_active := int(data.attacks) > 0
+	hud.status.text = "ATTACK LINK\nDRONE INTERCEPT IN PROGRESS" if attack_active else "AIR DEFENSE\n%d/%d DESTROYED · CLICK A TARGET" % [int(data.stations_destroyed), int(data.stations_total)]
+	hud.status.add_theme_color_override("font_color", Color("#ff9a62") if attack_active else Color("#e7eee7"))
+	hud.status_panel.add_theme_stylebox_override(
+		"panel",
+		_box(Color(0.25, 0.07, 0.025, 0.68), 1, Color("#ff6a2b"), 2)
+		if attack_active
+		else _box(Color(0.02, 0.04, 0.03, 0.55), 1, Color(0.75, 0.82, 0.78, 0.38), 2)
+	)
 	hud.progress.value = float(data.progress) * 100.0
 	var pips := ""
 	for slot in data.slots:
@@ -674,6 +774,7 @@ func _show_settings() -> void:
 	reduced.text = "REDUCED EFFECTS  /  FEWER CLOUDS, WEATHER PARTICLES, AND DEBRIS"
 	reduced.button_pressed = game_state.reduced_effects
 	reduced.add_theme_font_size_override("font_size", 13)
+	reduced.add_theme_font_override("font", MONO_FONT)
 	reduced.toggled.connect(_on_reduced_effects_toggled)
 	content.add_child(reduced)
 	content.add_child(_label("INPUT BINDINGS", 13, MUTED))
@@ -708,6 +809,8 @@ func _on_volume_changed(value: float, label: Label) -> void:
 
 func _on_reduced_effects_toggled(enabled: bool) -> void:
 	game_state.reduced_effects = enabled
+	if is_instance_valid(flight_world):
+		flight_world.set_reduced_effects(enabled)
 
 
 func _close_settings() -> void:
@@ -750,6 +853,7 @@ func _add_grid(parent: Control) -> void:
 func _label(text: String, size: int, color: Color) -> Label:
 	var label := Label.new()
 	label.text = text
+	label.add_theme_font_override("font", HEADLINE_FONT if size >= 32 else MONO_FONT)
 	label.add_theme_font_size_override("font_size", size)
 	label.add_theme_color_override("font_color", color)
 	return label
@@ -759,6 +863,7 @@ func _button(text: String) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.custom_minimum_size = Vector2(220, 52)
+	button.add_theme_font_override("font", MONO_MEDIUM_FONT)
 	button.add_theme_font_size_override("font_size", 15)
 	button.add_theme_color_override("font_color", INK)
 	button.add_theme_color_override("font_hover_color", INK)

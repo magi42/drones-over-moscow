@@ -10,6 +10,7 @@ const ROUTES := [
 	{"name": "UKRAINE", "call_sign": "SUNFLOWER", "position": Vector2(0.28, 0.81), "color": Color("#f0c84d")},
 ]
 const MOSCOW := Vector2(0.67, 0.51)
+const MONO_FONT = preload("res://assets/fonts/ibm_plex_mono/IBMPlexMono-Regular.ttf")
 
 
 func _ready() -> void:
@@ -39,7 +40,7 @@ func _draw() -> void:
 	draw_colored_polygon(federation, Color("#1b2923"))
 	draw_polyline(federation, Color("#4f685a"), 1.0)
 
-	var font := ThemeDB.fallback_font
+	var font := MONO_FONT
 	draw_string(font, Vector2(0.58, 0.44) * size, "RUSSIAN FEDERATION", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#52645a"))
 	var moscow_position := MOSCOW * size
 	draw_circle(moscow_position, 10.0, Color.TRANSPARENT, false, 2.0, true)

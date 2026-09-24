@@ -57,13 +57,17 @@ The native implementation currently includes:
   aircraft, plus twin-tube rooftop defense launchers;
 - growing pollution clouds with dark rain, blackened aircraft, and timed
   rooftop jumps with retreating companions;
-- a full-route summer storm field, omitted when reduced effects are enabled;
+- a full-route summer storm field, with live reduced-effects switching for
+  weather, pollution detail, and physics debris;
 - textured city scenery, randomized marked cross streets, and the shared
   oil-tank roof model from the web game;
 - apartment roof equipment and persistent damaged remains for destroyed targets;
-- a seeded 28-row city with 52 apartment blocks, 12 tanks, and 12 rooftop defenses;
+- a seeded 28-row city with 52 apartment blocks, 12 tanks, and 12 rooftop
+  defenses, using the web version's Mulberry32 sequence and layout rules;
 - a pulsing terminal boot sequence, native operator room, route map, mission
   briefing, and FP-1 blueprint display;
+- a procedural overcast sky, layered explosions, HUD vignette, briefing
+  scanlines, application metadata, and a native icon;
 - background music and synthesized propeller-engine audio;
 - persistent volume, reduced-effects, and keyboard-binding settings;
 - keyboard, mouse, and controller flight input.
@@ -87,7 +91,14 @@ Godot 4.7.1, then run:
 make -C godot export-linux
 ```
 
-The executable is written to `build/drones-over-moscow-godot.x86_64`.
+The executable is written to `build/drones-over-moscow-godot.x86_64`, with
+the bundled fonts' license texts in `build/licenses/`.
+
+## Fonts
+
+The interface bundles Barlow Condensed and IBM Plex Mono from the Google Fonts
+repository. Both are distributed under the SIL Open Font License 1.1; their
+license files are included beside the font files in `assets/fonts/`.
 
 ## Structure
 
@@ -95,6 +106,8 @@ The executable is written to `build/drones-over-moscow-godot.x86_64`.
 - `scripts/flight_world.gd` owns procedural scenery, flight, attacks, missiles,
   camera movement, and target destruction.
 - `scripts/game_state.gd` owns inventory and scoring rules.
+- `scripts/web_random.gd` reproduces the browser game's seeded Mulberry32
+  random-number sequence for deterministic city layouts.
 - `scripts/route_map.gd` and `scripts/drone_blueprint.gd` draw the native
   mission-selection and briefing visuals.
 - `assets/` contains native project copies of shared source assets.
