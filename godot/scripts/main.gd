@@ -3,6 +3,7 @@ extends Node
 const RouteMapControl = preload("res://scripts/route_map.gd")
 const DroneBlueprintControl = preload("res://scripts/drone_blueprint.gd")
 const OperatorRoomControl = preload("res://scripts/operator_room.gd")
+const BootTerminalControl = preload("res://scripts/boot_terminal.gd")
 const ACID := Color("#b7f238")
 const CYAN := Color("#72e5d2")
 const INK := Color("#090b0d")
@@ -31,6 +32,8 @@ func _ready() -> void:
 		_load_preferences()
 		_start_music()
 	_show_boot()
+	if "--boot-preview" in user_args:
+		return
 	if "--operator-preview" in user_args:
 		_show_operator()
 		return
@@ -44,6 +47,10 @@ func _ready() -> void:
 		_start_run()
 		return
 	if smoke_test_mode:
+		if screen.get_node_or_null("BootTerminal") == null:
+			printerr("SMOKE_TEST_FAILED: boot terminal did not load")
+			get_tree().quit(1)
+			return
 		_show_operator()
 		_show_settings()
 		if not is_instance_valid(settings_overlay):
@@ -75,6 +82,26 @@ func _ready() -> void:
 			printerr("SMOKE_TEST_FAILED: city layout counts do not match the web version")
 			get_tree().quit(1)
 			return
+		var first_tank: Dictionary = flight_world.targets[0]
+		var tank_mesh := first_tank.body.mesh as CylinderMesh
+		var first_station: Dictionary = flight_world.targets[oil_tanks]
+		if (
+			not is_equal_approx(float(first_tank.node.position.y), 1.5)
+			or not is_equal_approx(tank_mesh.top_radius, 4.3)
+			or not is_equal_approx(tank_mesh.height, 6.2)
+			or first_station.node.get_node_or_null("LauncherTubes") == null
+		):
+			printerr("SMOKE_TEST_FAILED: target models do not match the migrated dimensions")
+			get_tree().quit(1)
+			return
+		if not is_instance_valid(flight_world.storm_rain) or flight_world.storm_rain.multimesh.instance_count != 150:
+			printerr("SMOKE_TEST_FAILED: full-route storm field was not created")
+			get_tree().quit(1)
+			return
+		if flight_world.cross_roads.is_empty() or flight_world.cross_roads[0].get_child_count() != 21:
+			printerr("SMOKE_TEST_FAILED: marked cross streets were not created")
+			get_tree().quit(1)
+			return
 		if flight_world.rooftop_people.is_empty():
 			printerr("SMOKE_TEST_FAILED: rooftop civilians were not created")
 			get_tree().quit(1)
@@ -97,7 +124,7 @@ func _ready() -> void:
 		var untouched_tank := 6
 		flight_world._destroy_target(untouched_tank, false)
 		var tank: Dictionary = flight_world.targets[untouched_tank]
-		if not tank.node.visible or not tank.body.visible or tank.destroyable_visuals[1].visible or flight_world.pollution_clouds.is_empty():
+		if not tank.node.visible or not tank.body.visible or tank.destroyable_visuals[0].visible or flight_world.pollution_clouds.is_empty():
 			printerr("SMOKE_TEST_FAILED: destroyed tank aftermath is incomplete")
 			get_tree().quit(1)
 			return
@@ -106,15 +133,71 @@ func _ready() -> void:
 			printerr("SMOKE_TEST_FAILED: reduced-effects pollution rain is missing")
 			get_tree().quit(1)
 			return
+		flight_world._update_pollution(2.0)
+		cloud = flight_world.pollution_clouds[0]
+		if (
+			not is_equal_approx(float(cloud.node.scale.x), 0.575)
+			or not is_equal_approx(float(cloud.node.position.x), 0.76)
+			or not is_equal_approx(float(cloud.node.position.y), 23.0)
+		):
+			printerr("SMOKE_TEST_FAILED: pollution cloud growth and drift are incomplete")
+			get_tree().quit(1)
+			return
+		var collapse_index := -1
+		for building_index in range(flight_world.buildings.size()):
+			if not bool(flight_world.buildings[building_index].protected):
+				collapse_index = building_index
+				break
+		if collapse_index < 0:
+			printerr("SMOKE_TEST_FAILED: no building is available for collapse testing")
+			get_tree().quit(1)
+			return
+		var original_building: Dictionary = flight_world.buildings[collapse_index]
+		var original_height: float = float(original_building.size.y)
+		var original_y: float = float(original_building.node.position.y)
+		flight_world._damage_building(collapse_index)
+		flight_world._update_building_damage(FlightWorld.BUILDING_COLLAPSE_SECONDS * 0.5)
+		var collapsed_building: Dictionary = flight_world.buildings[collapse_index]
+		var collapsed_shape := (collapsed_building.collision.get_child(0) as CollisionShape3D).shape as BoxShape3D
+		var exposed_top: Vector3 = Vector3(collapsed_building.collision.position) + Vector3.UP * (collapsed_shape.size.y * 0.5 - 0.1)
+		if (
+			not is_equal_approx(float(collapsed_building.node.position.y), original_y - original_height / 3.0)
+			or not is_equal_approx(collapsed_shape.size.y, original_height * (2.0 / 3.0))
+			or collapsed_building.collision.collision_layer == 0
+			or flight_world._find_building_hit(exposed_top, -1, 0.0) != collapse_index
+		):
+			printerr("SMOKE_TEST_FAILED: damaged building did not leave a collidable collapsing ruin")
+			get_tree().quit(1)
+			return
 		for target_index in range(5):
 			flight_world._launch_attack(target_index)
 		for _frame in range(240):
-			flight_world._process(1.0 / 60.0)
+			flight_world._physics_process(1.0 / 60.0)
 		game_state.reduced_effects = previous_reduced_effects
 		if not flight_world.pending_targets.is_empty():
 			printerr("SMOKE_TEST_FAILED: queued attack did not dispatch")
 			get_tree().quit(1)
 			return
+		var lid_impact_buildings: Array[int] = []
+		for building_index in range(flight_world.buildings.size()):
+			if not bool(flight_world.buildings[building_index].damaged):
+				lid_impact_buildings.append(building_index)
+				if lid_impact_buildings.size() == 2:
+					break
+		var test_lid := RigidBody3D.new()
+		flight_world.add_child(test_lid)
+		for building_index in lid_impact_buildings:
+			flight_world._on_lid_body_entered(flight_world.buildings[building_index].collision, test_lid)
+		if (
+			lid_impact_buildings.size() != 2
+			or not bool(flight_world.buildings[lid_impact_buildings[0]].damaged)
+			or not bool(flight_world.buildings[lid_impact_buildings[1]].damaged)
+			or Dictionary(test_lid.get_meta("building_impacts", {})).size() != 2
+		):
+			printerr("SMOKE_TEST_FAILED: a flying tank lid could not damage multiple buildings")
+			get_tree().quit(1)
+			return
+		test_lid.queue_free()
 		flight_world._finish_run(true)
 		if phase != "results":
 			printerr("SMOKE_TEST_FAILED: results screen did not open")
@@ -170,6 +253,7 @@ func _start_music() -> void:
 
 func _clear_screen() -> void:
 	get_tree().paused = false
+	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 	if is_instance_valid(screen):
 		screen.queue_free()
 	if is_instance_valid(flight_world):
@@ -190,17 +274,19 @@ func _show_boot() -> void:
 	_clear_screen()
 	phase = "boot"
 	screen = _base_screen(Color("#090b0d"))
+	var terminal := BootTerminalControl.new()
+	terminal.name = "BootTerminal"
+	terminal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	screen.add_child(terminal)
 	var center := CenterContainer.new()
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	screen.add_child(center)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 54)
 	center.add_child(row)
-	var reticle := Label.new()
-	reticle.text = "⊕"
-	reticle.add_theme_font_size_override("font_size", 150)
-	reticle.add_theme_color_override("font_color", ACID)
-	row.add_child(reticle)
+	var reticle_space := Control.new()
+	reticle_space.custom_minimum_size = Vector2(230, 230)
+	row.add_child(reticle_space)
 	var copy := VBoxContainer.new()
 	copy.add_theme_constant_override("separation", 8)
 	row.add_child(copy)
@@ -209,11 +295,15 @@ func _show_boot() -> void:
 	var progress := ProgressBar.new()
 	progress.custom_minimum_size = Vector2(420, 4)
 	progress.show_percentage = false
-	progress.value = 100
+	progress.value = 0
 	progress.add_theme_stylebox_override("background", _box(Color("#242b27"), 0))
 	progress.add_theme_stylebox_override("fill", _box(ACID, 0))
 	copy.add_child(progress)
 	copy.add_child(_label("ESTABLISHING ENCRYPTED UPLINK", 12, MUTED))
+	var progress_tween := create_tween()
+	progress_tween.set_trans(Tween.TRANS_CUBIC)
+	progress_tween.set_ease(Tween.EASE_IN_OUT)
+	progress_tween.tween_property(progress, "value", 100.0, 1.8)
 
 
 func _show_operator() -> void:
@@ -357,6 +447,7 @@ func _show_briefing() -> void:
 func _start_run() -> void:
 	_clear_screen()
 	phase = "flight"
+	Input.set_default_cursor_shape(Input.CURSOR_CROSS)
 	if is_instance_valid(music):
 		music.stream_paused = false
 	game_state.reset_run()
@@ -580,7 +671,7 @@ func _show_settings() -> void:
 	content.add_child(volume)
 
 	var reduced := CheckButton.new()
-	reduced.text = "REDUCED EFFECTS  /  FEWER CLOUDS AND NO DYNAMIC DEBRIS"
+	reduced.text = "REDUCED EFFECTS  /  FEWER CLOUDS, WEATHER PARTICLES, AND DEBRIS"
 	reduced.button_pressed = game_state.reduced_effects
 	reduced.add_theme_font_size_override("font_size", 13)
 	reduced.toggled.connect(_on_reduced_effects_toggled)

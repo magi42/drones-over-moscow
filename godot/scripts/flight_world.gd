@@ -25,6 +25,8 @@ const AIRCRAFT_PART_OFFSETS := [
 const CITY_FIRST_ROW_Z := 8.0
 const CITY_ROW_SPACING := 15.0
 const CITY_COLUMNS := [-72.0, -48.0, -24.0, 0.0, 24.0, 48.0, 72.0]
+const BUILDING_COLLAPSE_SECONDS := 6.0
+const GROUND_DAMAGE_COOLDOWN := 8.0
 
 var state: GameState
 var formation: Node3D
@@ -39,11 +41,15 @@ var buildings: Array[Dictionary] = []
 var pollution_clouds: Array[Dictionary] = []
 var rooftop_people: Array[Dictionary] = []
 var tank_lids: Array[RigidBody3D] = []
+var cross_roads: Array[Node3D] = []
+var storm_rain: MultiMeshInstance3D
+var storm_drops: Array[Dictionary] = []
 var direct_fire_stations := {}
 var blackened_slots := [false, false, false, false]
 var ground_texture: Texture2D
 var wall_textures: Array[Texture2D] = []
 var tank_roof_scene: PackedScene
+var tank_roof_template: Node3D
 var engine_audio: AudioStreamPlayer
 var engine_playback: AudioStreamGeneratorPlayback
 var engine_phase_a := 0.0
@@ -72,6 +78,9 @@ func setup(game_state: GameState) -> void:
 		load("res://assets/textures/texture-house-wall-15-storeys-white.jpg"),
 	]
 	tank_roof_scene = load("res://assets/models/oil_tank_roof_blowoff_flat.glb")
+	if tank_roof_scene != null:
+		tank_roof_template = tank_roof_scene.instantiate() as Node3D
+		_curve_tank_roof(tank_roof_template)
 	_build_environment()
 	_build_city()
 	_build_formation()
@@ -85,12 +94,20 @@ func _exit_tree() -> void:
 		engine_audio.stop()
 		engine_audio.stream = null
 	engine_playback = null
+	if is_instance_valid(tank_roof_template):
+		tank_roof_template.free()
+	tank_roof_template = null
 
 
-func _process(delta: float) -> void:
+func _process(_delta: float) -> void:
 	if finished:
 		return
 	_fill_engine_audio()
+
+
+func _physics_process(delta: float) -> void:
+	if finished:
+		return
 	_spin_propellers(delta)
 	elapsed += delta
 	damage_cooldown = maxf(0.0, damage_cooldown - delta)
@@ -99,6 +116,8 @@ func _process(delta: float) -> void:
 	_update_refills(delta)
 	_update_missiles(delta)
 	_update_pollution(delta)
+	_update_storm(delta)
+	_update_building_damage(delta)
 	_update_rooftop_people(delta)
 	_check_formation_collisions()
 	_update_camera(delta)
@@ -139,33 +158,65 @@ func _build_environment() -> void:
 
 	var ground := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(190.0, 520.0)
+	plane.size = Vector2(340.0, 470.0)
 	ground.mesh = plane
-	ground.position = Vector3(0.0, -3.0, -210.0)
+	ground.position = Vector3(0.0, -3.0, -190.0)
 	var ground_material := _material(Color("#b5bab4"), 1.0)
 	ground_material.albedo_texture = ground_texture
 	ground_material.uv1_scale = Vector3(18.0, 14.0, 1.0)
 	ground.material_override = ground_material
 	add_child(ground)
-	_add_static_collision(ground.position - Vector3(0.0, 0.25, 0.0), Vector3(190.0, 0.5, 520.0))
+	_add_static_collision(ground.position - Vector3(0.0, 0.25, 0.0), Vector3(340.0, 0.5, 470.0))
 
-	for x in [-10.0, 10.0]:
-		var road := MeshInstance3D.new()
-		var road_mesh := PlaneMesh.new()
-		road_mesh.size = Vector2(8.0, 520.0)
-		road.mesh = road_mesh
-		road.position = Vector3(x, -2.96, -210.0)
-		road.material_override = _material(Color("#303632"), 1.0)
-		add_child(road)
+	_build_storm_field()
 
-	for row in range(16):
-		var cross_road := MeshInstance3D.new()
-		var cross_mesh := PlaneMesh.new()
-		cross_mesh.size = Vector2(190.0, 4.5)
-		cross_road.mesh = cross_mesh
-		cross_road.position = Vector3(0.0, -2.94, -7.5 - row * 30.0)
-		cross_road.material_override = _material(Color("#343a36"), 1.0)
-		add_child(cross_road)
+
+func _build_storm_field() -> void:
+	if state.reduced_effects:
+		return
+	storm_rain = MultiMeshInstance3D.new()
+	storm_rain.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var rain_mesh := BoxMesh.new()
+	rain_mesh.size = Vector3(0.045, 1.0, 0.045)
+	var rain_material := _material(Color(0.78, 0.83, 0.81, 0.3), 0.2)
+	rain_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	rain_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	rain_mesh.material = rain_material
+	var multi := MultiMesh.new()
+	multi.transform_format = MultiMesh.TRANSFORM_3D
+	multi.mesh = rain_mesh
+	multi.instance_count = 150
+	storm_rain.multimesh = multi
+	add_child(storm_rain)
+
+	var weather_rng := RandomNumberGenerator.new()
+	weather_rng.seed = state.run_seed ^ 0x53544f524d
+	for drop_index in range(multi.instance_count):
+		storm_drops.append({
+			"position": Vector3(
+				weather_rng.randf_range(-47.0, 47.0),
+				weather_rng.randf_range(-1.0, 31.0),
+				weather_rng.randf_range(-255.0, 25.0)
+			),
+			"speed": weather_rng.randf_range(10.0, 18.0),
+			"length": weather_rng.randf_range(0.55, 1.7),
+		})
+	_update_storm(0.0)
+
+
+func _update_storm(delta: float) -> void:
+	if not is_instance_valid(storm_rain):
+		return
+	for drop_index in range(storm_drops.size()):
+		var drop: Dictionary = storm_drops[drop_index]
+		var position: Vector3 = drop.position
+		position.y -= float(drop.speed) * delta
+		if position.y < -1.0:
+			position.y += 32.0
+		drop.position = position
+		storm_drops[drop_index] = drop
+		var basis := Basis.IDENTITY.scaled(Vector3(1.0, float(drop.length), 1.0))
+		storm_rain.multimesh.set_instance_transform(drop_index, Transform3D(basis, position))
 
 
 func _build_city() -> void:
@@ -225,7 +276,7 @@ func _build_city() -> void:
 		building.rotation.y = PI if rng.randf() > 0.5 else 0.0
 		building.material_override = _building_material(
 			colors[rng.randi_range(0, colors.size() - 1)],
-			height
+			storeys
 		)
 		add_child(building)
 		var collision := _add_static_collision(building.position, size)
@@ -240,19 +291,61 @@ func _build_city() -> void:
 			"size": size,
 			"row": int(cell.row),
 			"damaged": false,
+			"damage_elapsed": 0.0,
 			"protected": has_station or has_person,
 		})
 		_add_windows(building, size.x, size.y)
 		_add_roof_details(building, size)
+		var building_data: Dictionary = buildings[building_index]
+		var materials := _collect_building_materials(building)
+		var material_bases: Array[Dictionary] = []
+		for material in materials:
+			material_bases.append({
+				"albedo": material.albedo_color,
+				"emission": material.emission,
+				"emission_energy": material.emission_energy_multiplier,
+			})
+		building_data.materials = materials
+		building_data.material_bases = material_bases
+		buildings[building_index] = building_data
 		if has_station:
 			station_buildings.append(building_index)
 		elif has_person:
 			_add_rooftop_person(building_index)
 
 	for cell in tank_cells:
-		_create_tank(Vector3(float(cell.x), -1.1, float(cell.z)))
+		_create_tank(Vector3(float(cell.x), 1.5, float(cell.z)))
 	for building_index in station_buildings:
 		_create_station(building_index)
+	_build_cross_roads()
+
+
+func _build_cross_roads() -> void:
+	var road_material := _material(Color("#171a19"), 0.9)
+	var marker_material := _material(Color("#d9b566"), 0.7)
+	marker_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var road_row := 3 + floori(rng.randf() * 3.0)
+	while road_row < 28:
+		var road_root := Node3D.new()
+		road_root.position.z = CITY_FIRST_ROW_Z - float(road_row) * CITY_ROW_SPACING + 7.5
+		add_child(road_root)
+		cross_roads.append(road_root)
+		var cross_road := MeshInstance3D.new()
+		var cross_mesh := PlaneMesh.new()
+		cross_mesh.size = Vector2(330.0, 6.0)
+		cross_road.mesh = cross_mesh
+		cross_road.position.y = -2.94
+		cross_road.material_override = road_material
+		road_root.add_child(cross_road)
+		for marker_index in range(20):
+			var marker := MeshInstance3D.new()
+			var marker_mesh := PlaneMesh.new()
+			marker_mesh.size = Vector2(5.0, 0.14)
+			marker.mesh = marker_mesh
+			marker.position = Vector3(-152.0 + float(marker_index) * 16.0, -2.88, 0.0)
+			marker.material_override = marker_material
+			road_root.add_child(marker)
+		road_row += 1 + floori(rng.randf() * 3.0)
 
 
 func _shuffle_cells(cells: Array[Dictionary]) -> void:
@@ -405,78 +498,110 @@ func _create_tank(position: Vector3) -> void:
 	var area := Area3D.new()
 	area.position = position
 	var body := MeshInstance3D.new()
+	body.name = "TankBody"
 	var cylinder := CylinderMesh.new()
-	cylinder.top_radius = 3.6
-	cylinder.bottom_radius = 3.6
-	cylinder.height = 3.8
+	cylinder.top_radius = 4.3
+	cylinder.bottom_radius = 4.3
+	cylinder.height = 6.2
 	body.mesh = cylinder
-	body.material_override = _material(Color("#bab6a1"), 0.7)
+	body.position.y = -1.4
+	var body_material := _material(Color("#b7b9ae"), 0.48)
+	body_material.metallic = 0.58
+	body.material_override = body_material
 	area.add_child(body)
-	var stripe := MeshInstance3D.new()
-	var stripe_mesh := CylinderMesh.new()
-	stripe_mesh.top_radius = 3.68
-	stripe_mesh.bottom_radius = 3.68
-	stripe_mesh.height = 0.25
-	stripe.mesh = stripe_mesh
-	stripe.position.y = 0.8
-	stripe.material_override = _material(Color("#8f3429"), 0.75)
-	area.add_child(stripe)
 	var roof := _make_tank_roof()
-	roof.position.y = 2.0
+	roof.name = "TankRoof"
+	roof.position.y = 1.93
 	area.add_child(roof)
 	var shape := CollisionShape3D.new()
 	var cylinder_shape := CylinderShape3D.new()
-	cylinder_shape.radius = 3.8
-	cylinder_shape.height = 4.2
+	cylinder_shape.radius = 4.3
+	cylinder_shape.height = 6.2
 	shape.shape = cylinder_shape
+	shape.position.y = -1.4
 	area.add_child(shape)
-	_add_target_indicator(area, 4.9, 3.2)
+	_add_target_indicator(area, 5.35, 3.03)
 	_register_target(area, "oil_tank")
 	var target_index := targets.size() - 1
 	targets[target_index].body = body
-	targets[target_index].destroyable_visuals = [stripe, roof]
+	targets[target_index].destroyable_visuals = [roof]
 
 
 func _create_station(building_index: int) -> void:
 	var building: Dictionary = buildings[building_index]
 	var building_node: MeshInstance3D = building.node
 	var area := Area3D.new()
-	area.position = Vector3(0.0, float(building.size.y) * 0.5 + 0.65, 0.0)
+	area.position = Vector3(0.0, float(building.size.y) * 0.5 + 0.42, 0.0)
+	var pedestal := MeshInstance3D.new()
+	var pedestal_mesh := CylinderMesh.new()
+	pedestal_mesh.top_radius = 2.35
+	pedestal_mesh.bottom_radius = 2.7
+	pedestal_mesh.height = 5.4
+	pedestal_mesh.radial_segments = 12
+	pedestal.mesh = pedestal_mesh
+	pedestal.position.y = -2.3
+	var pedestal_material := _material(Color("#687361"), 0.72)
+	pedestal_material.metallic = 0.28
+	pedestal.material_override = pedestal_material
+	area.add_child(pedestal)
 	var base := MeshInstance3D.new()
-	var base_mesh := BoxMesh.new()
-	base_mesh.size = Vector3(4.5, 1.1, 4.5)
+	base.name = "StationBase"
+	var base_mesh := CylinderMesh.new()
+	base_mesh.top_radius = 3.3
+	base_mesh.bottom_radius = 3.8
+	base_mesh.height = 0.8
+	base_mesh.radial_segments = 10
 	base.mesh = base_mesh
-	base.material_override = _material(Color("#48574a"), 0.9)
+	base.material_override = _material(Color("#596451"), 0.82)
 	area.add_child(base)
-	var radar := MeshInstance3D.new()
-	var dish := SphereMesh.new()
-	dish.radius = 1.6
-	dish.height = 0.65
-	radar.mesh = dish
-	radar.position.y = 1.2
-	radar.rotation_degrees.x = 28.0
-	radar.material_override = _material(Color("#87927e"), 0.65)
-	area.add_child(radar)
-	var antenna := MeshInstance3D.new()
-	var antenna_mesh := CylinderMesh.new()
-	antenna_mesh.top_radius = 0.12
-	antenna_mesh.bottom_radius = 0.18
-	antenna_mesh.height = 3.5
-	antenna.mesh = antenna_mesh
-	antenna.position.y = 1.4
-	antenna.material_override = _material(Color("#313a32"), 0.9)
-	area.add_child(antenna)
+	var equipment := MeshInstance3D.new()
+	var equipment_mesh := BoxMesh.new()
+	equipment_mesh.size = Vector3(3.2, 1.3, 3.8)
+	equipment.mesh = equipment_mesh
+	equipment.position.y = 1.0
+	var equipment_material := _material(Color("#75806c"), 0.64)
+	equipment_material.metallic = 0.35
+	equipment.material_override = equipment_material
+	area.add_child(equipment)
+	var launcher := Node3D.new()
+	launcher.name = "LauncherTubes"
+	launcher.position.y = 2.25
+	launcher.rotation.x = 0.52
+	area.add_child(launcher)
+	for tube_x in [-0.7, 0.7]:
+		var tube := MeshInstance3D.new()
+		var tube_mesh := CylinderMesh.new()
+		tube_mesh.top_radius = 0.22
+		tube_mesh.bottom_radius = 0.3
+		tube_mesh.height = 3.8
+		tube_mesh.radial_segments = 8
+		tube.mesh = tube_mesh
+		tube.position.x = tube_x
+		var tube_material := _material(Color("#d4d0b4"), 0.42)
+		tube_material.metallic = 0.52
+		tube.material_override = tube_material
+		launcher.add_child(tube)
+	var flare := MeshInstance3D.new()
+	var flare_mesh := BoxMesh.new()
+	flare_mesh.size = Vector3(0.8, 0.8, 0.8)
+	flare.mesh = flare_mesh
+	flare.position = Vector3(0.0, 2.2, -1.6)
+	var flare_material := _material(Color("#ffd84a"), 0.35, Color("#ffd84a"))
+	flare_material.emission_energy_multiplier = 1.15
+	flare.material_override = flare_material
+	area.add_child(flare)
 	var shape := CollisionShape3D.new()
 	var box_shape := BoxShape3D.new()
-	box_shape.size = Vector3(5.0, 5.0, 5.0)
+	box_shape.size = Vector3(7.6, 9.8, 7.6)
 	shape.shape = box_shape
+	shape.position.y = -0.1
 	area.add_child(shape)
 	_add_target_indicator(area, 4.2, 4.2)
 	building_node.add_child(area)
 	_register_target(area, "air_defense", building_index)
 	var target_index := targets.size() - 1
 	targets[target_index].body = base
-	targets[target_index].destroyable_visuals = [radar, antenna]
+	targets[target_index].destroyable_visuals = [pedestal, equipment, launcher, flare]
 	total_stations += 1
 
 
@@ -497,8 +622,8 @@ func _add_target_indicator(area: Area3D, radius: float, height: float) -> void:
 
 
 func _make_tank_roof() -> Node3D:
-	if tank_roof_scene != null:
-		var imported := tank_roof_scene.instantiate() as Node3D
+	if is_instance_valid(tank_roof_template):
+		var imported := tank_roof_template.duplicate() as Node3D
 		imported.rotation.x = -PI * 0.5
 		imported.scale = Vector3.ONE * 1.06
 		return imported
@@ -510,6 +635,54 @@ func _make_tank_roof() -> Node3D:
 	fallback.mesh = mesh
 	fallback.material_override = _material(Color("#b5b09d"), 0.55)
 	return fallback
+
+
+func _curve_tank_roof(root: Node3D) -> void:
+	var mesh_instances: Array[MeshInstance3D] = []
+	if root is MeshInstance3D:
+		mesh_instances.append(root as MeshInstance3D)
+	for child in root.find_children("*", "MeshInstance3D", true, false):
+		mesh_instances.append(child as MeshInstance3D)
+	for mesh_instance in mesh_instances:
+		var source_mesh := mesh_instance.mesh
+		if source_mesh == null:
+			continue
+		var curved_mesh := ArrayMesh.new()
+		for surface_index in range(source_mesh.get_surface_count()):
+			var arrays := source_mesh.surface_get_arrays(surface_index)
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			for vertex_index in range(vertices.size()):
+				var vertex := vertices[vertex_index]
+				var radius_squared := (vertex.x * vertex.x + vertex.y * vertex.y) / 16.0
+				if radius_squared < 1.0:
+					vertex.z += 0.8 * sqrt(1.0 - radius_squared)
+					vertices[vertex_index] = vertex
+			arrays[Mesh.ARRAY_VERTEX] = vertices
+			arrays[Mesh.ARRAY_NORMAL] = _mesh_vertex_normals(vertices, arrays[Mesh.ARRAY_INDEX])
+			curved_mesh.add_surface_from_arrays(source_mesh.surface_get_primitive_type(surface_index), arrays)
+			curved_mesh.surface_set_material(surface_index, source_mesh.surface_get_material(surface_index))
+		mesh_instance.mesh = curved_mesh
+
+
+func _mesh_vertex_normals(vertices: PackedVector3Array, indices: PackedInt32Array) -> PackedVector3Array:
+	var normals := PackedVector3Array()
+	normals.resize(vertices.size())
+	for vertex_index in range(normals.size()):
+		normals[vertex_index] = Vector3.ZERO
+	var triangle_vertex_count := indices.size() if not indices.is_empty() else vertices.size()
+	for face_start in range(0, triangle_vertex_count - 2, 3):
+		var first := indices[face_start] if not indices.is_empty() else face_start
+		var second := indices[face_start + 1] if not indices.is_empty() else face_start + 1
+		var third := indices[face_start + 2] if not indices.is_empty() else face_start + 2
+		var normal := (vertices[second] - vertices[first]).cross(vertices[third] - vertices[first])
+		if normal.length_squared() <= 0.000001:
+			continue
+		normals[first] += normal
+		normals[second] += normal
+		normals[third] += normal
+	for vertex_index in range(normals.size()):
+		normals[vertex_index] = normals[vertex_index].normalized()
+	return normals
 
 
 func _register_target(area: Area3D, kind: String, building_index := -1) -> void:
@@ -531,7 +704,7 @@ func _register_target(area: Area3D, kind: String, building_index := -1) -> void:
 
 func _build_formation() -> void:
 	formation = Node3D.new()
-	formation.position = Vector3(0.0, 5.0, 12.0)
+	formation.position = Vector3(0.0, 5.0, CITY_FIRST_ROW_Z)
 	add_child(formation)
 	for offset in FORMATION_OFFSETS:
 		var drone := _make_drone()
@@ -617,13 +790,33 @@ func _material(color: Color, roughness := 0.8, emission := Color(0, 0, 0, 1)) ->
 	return material
 
 
-func _building_material(color: Color, height: float) -> StandardMaterial3D:
+func _building_material(color: Color, storeys: int) -> StandardMaterial3D:
 	var material := _material(color.lightened(0.24), 0.9)
-	var texture_index := 0 if height < 17.0 else (1 if height < 21.0 else 2)
+	var texture_index := 0 if storeys == 10 else (1 if storeys == 11 else 2)
 	if texture_index < wall_textures.size():
 		material.albedo_texture = wall_textures[texture_index]
-		material.uv1_scale = Vector3(1.0, maxf(1.0, height / 15.0), 1.0)
+		material.uv1_scale = Vector3(1.0, maxf(1.0, float(storeys) / 9.0), 1.0)
 	return material
+
+
+func _collect_building_materials(building: MeshInstance3D) -> Array[StandardMaterial3D]:
+	var materials: Array[StandardMaterial3D] = []
+	if building.material_override is StandardMaterial3D:
+		materials.append(building.material_override as StandardMaterial3D)
+	for child in building.find_children("*", "", true, false):
+		if child is MeshInstance3D:
+			var mesh_instance := child as MeshInstance3D
+			if mesh_instance.material_override is StandardMaterial3D:
+				materials.append(mesh_instance.material_override as StandardMaterial3D)
+		elif child is MultiMeshInstance3D:
+			var multi_instance := child as MultiMeshInstance3D
+			if (
+				multi_instance.multimesh != null
+				and multi_instance.multimesh.mesh != null
+				and multi_instance.multimesh.mesh.material is StandardMaterial3D
+			):
+				materials.append(multi_instance.multimesh.mesh.material as StandardMaterial3D)
+	return materials
 
 
 func _start_engine_audio() -> void:
@@ -888,8 +1081,9 @@ func _find_structure_hit(parts: Array[Vector3], intended_target_index := -1) -> 
 			var horizontal := Vector2(position.x - target_position.x, position.z - target_position.z)
 			var radius := 4.5 if target.kind == "oil_tank" else 4.0
 			var vertical_hit := (
-				position.y >= target_position.y - (2.0 if target.kind == "oil_tank" else 5.0)
-				and position.y <= target_position.y + (4.5 if target.kind == "oil_tank" else 4.8)
+				(position.y >= -0.3 and position.y <= 4.0)
+				if target.kind == "oil_tank"
+				else (position.y >= target_position.y - 5.0 and position.y <= target_position.y + 4.8)
 			)
 			if horizontal.length() <= radius and vertical_hit:
 				return {"kind": "target", "index": target_index}
@@ -903,11 +1097,14 @@ func _find_structure_hit(parts: Array[Vector3], intended_target_index := -1) -> 
 
 func _find_building_hit(position: Vector3, excluded_index := -1, radius := 0.8) -> int:
 	for building_index in range(buildings.size()):
-		if building_index == excluded_index or buildings[building_index].damaged:
+		if building_index == excluded_index:
 			continue
 		var building := buildings[building_index]
-		var center: Vector3 = building.position
+		var center: Vector3 = building.collision.position
 		var size: Vector3 = building.size
+		var shape_node := building.collision.get_child(0) as CollisionShape3D
+		if shape_node != null and shape_node.shape is BoxShape3D:
+			size = (shape_node.shape as BoxShape3D).size
 		if (
 			absf(position.x - center.x) <= size.x * 0.5 + radius
 			and absf(position.y - center.y) <= size.y * 0.5 + radius
@@ -1002,55 +1199,76 @@ func _spawn_explosion(position: Vector3) -> void:
 
 
 func _spawn_tank_aftermath(position: Vector3) -> void:
-	_spawn_pollution_cloud(position + Vector3(0.0, 24.0, 0.0))
+	_spawn_pollution_cloud(position)
 	if state.reduced_effects:
 		return
 	var lid := RigidBody3D.new()
-	lid.mass = 7.0
+	lid.mass = 2.0
+	lid.physics_material_override = PhysicsMaterial.new()
+	lid.physics_material_override.bounce = 0.42
 	lid.contact_monitor = true
-	lid.max_contacts_reported = 4
-	lid.position = position + Vector3(0.0, 2.4, 0.0)
+	lid.max_contacts_reported = 12
+	lid.position = position + Vector3(0.0, 1.93, 0.0)
 	lid.linear_damp = 0.12
 	lid.angular_damp = 0.08
 	lid.add_child(_make_tank_roof())
 	var shape_node := CollisionShape3D.new()
 	var shape := CylinderShape3D.new()
-	shape.radius = 3.7
-	shape.height = 0.22
+	shape.radius = 4.25
+	shape.height = 0.5
 	shape_node.shape = shape
 	lid.add_child(shape_node)
 	add_child(lid)
 	tank_lids.append(lid)
 	lid.body_entered.connect(_on_lid_body_entered.bind(lid))
-	lid.apply_central_impulse(Vector3(rng.randf_range(-12.0, 12.0), 34.0, rng.randf_range(-10.0, 5.0)))
-	lid.angular_velocity = Vector3(rng.randf_range(-5.0, 5.0), rng.randf_range(-3.0, 3.0), rng.randf_range(-5.0, 5.0))
+	lid.linear_velocity = Vector3(-7.0 if position.x > 0.0 else 7.0, 24.0, 3.0)
+	lid.angular_velocity = Vector3(8.0, 4.0, 12.0)
 	get_tree().create_timer(14.0).timeout.connect(lid.queue_free)
 
 
 func _on_lid_body_entered(body: Node, lid: RigidBody3D) -> void:
-	if not is_instance_valid(lid) or lid.has_meta("building_impact"):
+	if not is_instance_valid(lid):
 		return
 	if not body.has_meta("building_index"):
 		return
-	lid.set_meta("building_impact", true)
-	_damage_building(int(body.get_meta("building_index")))
+	var building_index := int(body.get_meta("building_index"))
+	var building_impacts: Dictionary = lid.get_meta("building_impacts", {})
+	if building_impacts.has(building_index):
+		return
+	building_impacts[building_index] = true
+	lid.set_meta("building_impacts", building_impacts)
+	_damage_building(building_index)
 	_spawn_explosion(lid.global_position)
 
 
 func _spawn_pollution_cloud(position: Vector3) -> void:
+	var cloud_root := Node3D.new()
+	cloud_root.position = Vector3(position.x, 0.0, position.z)
+	add_child(cloud_root)
 	var cloud := Node3D.new()
-	cloud.position = position
-	add_child(cloud)
+	cloud.position.y = 23.0
+	cloud.scale = Vector3.ONE * 0.15
+	cloud_root.add_child(cloud)
 	var blob_count := 7 if state.reduced_effects else 14
 	for _index in range(blob_count):
 		var blob := MeshInstance3D.new()
 		var sphere := SphereMesh.new()
-		sphere.radius = rng.randf_range(2.2, 4.2)
-		sphere.height = sphere.radius * 2.0
+		sphere.radius = 1.0
+		sphere.height = 2.0
 		blob.mesh = sphere
-		blob.position = Vector3(rng.randf_range(-5.0, 5.0), rng.randf_range(-1.0, 3.5), rng.randf_range(-4.0, 4.0))
-		var smoke := _material(Color(0.055, 0.065, 0.06, 0.82), 1.0)
+		blob.position = Vector3(
+			rng.randf_range(-8.5, 8.5),
+			rng.randf_range(-2.25, 2.25),
+			rng.randf_range(-6.5, 6.5)
+		)
+		blob.scale = Vector3(
+			rng.randf_range(3.8, 8.6),
+			rng.randf_range(1.7, 4.3),
+			rng.randf_range(3.2, 7.6)
+		)
+		var smoke := _material(Color(0.028, 0.035, 0.028, 0.9), 1.0, Color("#020302"))
 		smoke.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		smoke.emission_energy_multiplier = 0.25
 		blob.material_override = smoke
 		cloud.add_child(blob)
 	var rain := MultiMeshInstance3D.new()
@@ -1068,7 +1286,7 @@ func _spawn_pollution_cloud(position: Vector3) -> void:
 	var drop_count := 28 if state.reduced_effects else 80
 	multi.instance_count = drop_count
 	rain.multimesh = multi
-	cloud.add_child(rain)
+	cloud_root.add_child(rain)
 	var drops: Array[Dictionary] = []
 	for _index in range(drop_count):
 		drops.append({
@@ -1078,25 +1296,30 @@ func _spawn_pollution_cloud(position: Vector3) -> void:
 			"speed": rng.randf_range(8.0, 19.0),
 			"length": rng.randf_range(0.5, 1.7),
 		})
-	pollution_clouds.append({"node": cloud, "age": 0.0, "radius": 10.5, "rain": rain, "drops": drops})
+	pollution_clouds.append({
+		"root": cloud_root,
+		"node": cloud,
+		"age": 0.0,
+		"radius": 11.0,
+		"rain": rain,
+		"drops": drops,
+	})
 
 
 func _update_pollution(delta: float) -> void:
-	for index in range(pollution_clouds.size() - 1, -1, -1):
+	for index in range(pollution_clouds.size()):
 		var cloud := pollution_clouds[index]
 		cloud.age = float(cloud.age) + delta
-		cloud.node.position.y += delta * 0.34
-		cloud.node.position.x += delta * 0.22
+		var growth := minf(1.0, float(cloud.age) / 4.0)
+		cloud.node.scale = Vector3.ONE * (0.15 + growth * 0.85)
+		cloud.node.position.x += delta * 0.38
 		var multi: MultiMesh = cloud.rain.multimesh
 		for drop_index in range(cloud.drops.size()):
 			var drop: Dictionary = cloud.drops[drop_index]
-			var drop_y := -2.0 - fposmod(float(cloud.age) * float(drop.speed) + float(drop.phase), 25.0)
+			var drop_y := 21.0 - fposmod(float(cloud.age) * float(drop.speed) + float(drop.phase), 25.0)
 			var basis := Basis.IDENTITY.scaled(Vector3(1.0, float(drop.length), 1.0))
 			multi.set_instance_transform(drop_index, Transform3D(basis, Vector3(float(drop.x), drop_y, float(drop.z))))
 		pollution_clouds[index] = cloud
-		if float(cloud.age) > 28.0:
-			cloud.node.queue_free()
-			pollution_clouds.remove_at(index)
 
 
 func _update_rooftop_people(delta: float) -> void:
@@ -1225,7 +1448,7 @@ func _available_defenses() -> Array[Dictionary]:
 		var target := targets[target_index]
 		if target.kind == "air_defense" and not target.destroyed:
 			var dz: float = target.node.global_position.z - formation.global_position.z
-			if dz < 28.0 and dz > -105.0:
+			if absf(dz) < 75.0:
 				available.append({"index": target_index, "target": target})
 	return available
 
@@ -1311,16 +1534,20 @@ func _choose_environment_impact() -> Dictionary:
 			candidates.append({
 				"kind": "target",
 				"index": target_index,
-				"position": target.node.global_position + Vector3(0.0, 2.0, 0.0),
+				"position": target.node.global_position + Vector3(0.0, 2.2, 0.0),
 			})
 	for building_index in range(buildings.size()):
 		var building := buildings[building_index]
-		if building.damaged or bool(building.get("protected", false)):
+		if bool(building.get("protected", false)):
 			continue
+		var shape_node := building.collision.get_child(0) as CollisionShape3D
+		var exposed_height: float = float(building.size.y)
+		if shape_node != null and shape_node.shape is BoxShape3D:
+			exposed_height = (shape_node.shape as BoxShape3D).size.y
 		candidates.append({
 			"kind": "building",
 			"index": building_index,
-			"position": Vector3(building.position) + Vector3(0.0, float(building.size.y) * 0.5, 0.0),
+			"position": Vector3(building.collision.position) + Vector3(0.0, exposed_height * 0.5, 0.0),
 		})
 	if candidates.is_empty():
 		return {}
@@ -1363,7 +1590,7 @@ func _check_formation_collisions() -> void:
 		if damage_cooldown > 0.0:
 			continue
 		if position.y <= 0.75:
-			damage_cooldown = 3.0
+			damage_cooldown = GROUND_DAMAGE_COOLDOWN
 			_destroy_slot(slot, position)
 			return
 		var structure_hit := _find_structure_hit(parts)
@@ -1381,7 +1608,7 @@ func _is_under_pollution(parts: Array[Vector3]) -> bool:
 		var cloud_position: Vector3 = cloud.node.global_position
 		for position in parts:
 			var horizontal := Vector2(position.x - cloud_position.x, position.z - cloud_position.z)
-			if horizontal.length() < float(cloud.radius) and position.y < cloud_position.y + 2.0:
+			if horizontal.length() < float(cloud.radius) and position.y < cloud_position.y:
 				return true
 	return false
 
@@ -1395,17 +1622,49 @@ func _set_drone_blackened(drone: Node3D) -> void:
 func _damage_building(building_index: int) -> void:
 	if building_index < 0 or building_index >= buildings.size() or buildings[building_index].damaged:
 		return
-	buildings[building_index].damaged = true
 	var building := buildings[building_index]
-	var collision: StaticBody3D = building.collision
-	collision.collision_layer = 0
-	collision.collision_mask = 0
-	var node: MeshInstance3D = building.node
-	var target_y: float = node.position.y - float(building.size.y) * 0.62
-	var tween := create_tween()
-	tween.set_trans(Tween.TRANS_QUAD)
-	tween.set_ease(Tween.EASE_IN)
-	tween.tween_property(node, "position:y", target_y, 5.5)
+	building.damaged = true
+	building.damage_elapsed = 0.0
+	buildings[building_index] = building
+
+
+func _update_building_damage(delta: float) -> void:
+	for building_index in range(buildings.size()):
+		var building: Dictionary = buildings[building_index]
+		if not bool(building.damaged):
+			continue
+		building.damage_elapsed = minf(
+			BUILDING_COLLAPSE_SECONDS,
+			float(building.damage_elapsed) + delta
+		)
+		var progress: float = float(building.damage_elapsed) / BUILDING_COLLAPSE_SECONDS
+		var original_position: Vector3 = building.position
+		var original_size: Vector3 = building.size
+		var node := building.node as MeshInstance3D
+		node.position = original_position - Vector3(0.0, original_size.y * (2.0 / 3.0) * progress, 0.0)
+
+		var collision := building.collision as StaticBody3D
+		var remaining_height := lerpf(original_size.y, original_size.y / 3.0, progress)
+		collision.position = Vector3(
+			original_position.x,
+			-3.0 + remaining_height * 0.5,
+			original_position.z
+		)
+		var shape_node := collision.get_child(0) as CollisionShape3D
+		if shape_node != null and shape_node.shape is BoxShape3D:
+			var shape := shape_node.shape as BoxShape3D
+			shape.size = Vector3(original_size.x, remaining_height, original_size.z)
+
+		var materials: Array = building.materials
+		var material_bases: Array = building.material_bases
+		for material_index in range(materials.size()):
+			var material := materials[material_index] as StandardMaterial3D
+			var base: Dictionary = material_bases[material_index]
+			material.albedo_color = Color(base.albedo).lerp(Color("#080908"), progress * 0.88)
+			if material.emission_enabled:
+				material.emission = Color(base.emission).lerp(Color("#010201"), progress)
+				material.emission_energy_multiplier = lerpf(float(base.emission_energy), 0.04, progress)
+		buildings[building_index] = building
 
 
 func _update_progress() -> void:

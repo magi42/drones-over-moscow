@@ -51,14 +51,19 @@ The native implementation currently includes:
 - clickable oil tanks and rooftop air-defense stations;
 - queued attack orders and visible replacement aircraft;
 - guided defensive missiles with swept collision checks and formation damage;
+- fixed-step 60 Hz flight simulation matching the browser game timing;
 - obstacle-clearing strike paths and whole-aircraft structure collisions;
-- physics-driven oil-tank roofs that can damage buildings and aircraft;
-- pollution clouds with dark rain, blackened aircraft, and timed rooftop jumps
-  with retreating companions;
-- textured city scenery and the shared oil-tank roof model from the web game;
+- curved, physics-driven oil-tank roofs that can damage multiple buildings and
+  aircraft, plus twin-tube rooftop defense launchers;
+- growing pollution clouds with dark rain, blackened aircraft, and timed
+  rooftop jumps with retreating companions;
+- a full-route summer storm field, omitted when reduced effects are enabled;
+- textured city scenery, randomized marked cross streets, and the shared
+  oil-tank roof model from the web game;
 - apartment roof equipment and persistent damaged remains for destroyed targets;
 - a seeded 28-row city with 52 apartment blocks, 12 tanks, and 12 rooftop defenses;
-- a native operator room, route map, mission briefing, and FP-1 blueprint display;
+- a pulsing terminal boot sequence, native operator room, route map, mission
+  briefing, and FP-1 blueprint display;
 - background music and synthesized propeller-engine audio;
 - persistent volume, reduced-effects, and keyboard-binding settings;
 - keyboard, mouse, and controller flight input.
