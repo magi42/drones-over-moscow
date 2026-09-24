@@ -9,6 +9,7 @@ func _init() -> void:
 	_assert_equal(state.launches_remaining, 24, "starts with full inventory")
 	_assert_equal(state.add_score("checkpoint"), 650, "route multiplier applies")
 	_assert_equal(state.score, 650, "score is accumulated")
+	_assert_equal(state.add_score("warehouse"), 1170, "warehouse strikes use route scoring")
 
 	for index in range(20):
 		var launch: Dictionary = state.launch_drone()
@@ -23,8 +24,8 @@ func _init() -> void:
 	_assert_equal(state.survivors, 3, "unreplaced launch reduces survivors")
 
 	state.finish(true)
-	_assert_equal(state.score, 5330, "survivor bonus is applied")
-	_assert_equal(state.best_score, 5330, "best score is recorded")
+	_assert_equal(state.score, 6500, "survivor bonus is applied")
+	_assert_equal(state.best_score, 6500, "best score is recorded")
 
 	state.reset_run()
 	_assert_true(state.run_seed > 1, "a run receives a fresh procedural seed")

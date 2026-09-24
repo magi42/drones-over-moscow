@@ -48,7 +48,7 @@ reserve.
 The native implementation currently includes:
 
 - fixed-duration missions, checkpoints, survivor bonuses, and personal bests;
-- clickable oil tanks and rooftop air-defense stations;
+- clickable oil tanks, large warehouses, and rooftop air-defense stations;
 - queued attack orders and visible replacement aircraft;
 - guided defensive missiles with swept collision checks and formation damage;
 - fixed-step 60 Hz flight simulation matching the browser game timing;
@@ -57,10 +57,14 @@ The native implementation currently includes:
   aircraft, plus twin-tube rooftop defense launchers;
 - growing pollution clouds with dark rain, blackened aircraft, and timed
   rooftop jumps with retreating companions;
+- persistent warehouse fires with layered flames, rising smoke, and local fire
+  lighting after a successful strike;
 - a full-route summer storm field, with live reduced-effects switching for
   weather, pollution detail, and physics debris;
 - textured city scenery, randomized marked cross streets, and the shared
   oil-tank roof model from the web game;
+- an empty approach before the first city row, plus deterministic dead trees,
+  street lamps, and rubble throughout the route;
 - apartment roof equipment and persistent damaged remains for destroyed targets;
 - a seeded 28-row city with 52 apartment blocks, 12 tanks, and 12 rooftop
   defenses, using the web version's Mulberry32 sequence and layout rules;

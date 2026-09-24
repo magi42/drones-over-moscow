@@ -8,6 +8,7 @@ const ScreenEffectsControl = preload("res://scripts/screen_effects.gd")
 const HEADLINE_FONT = preload("res://assets/fonts/barlow_condensed/BarlowCondensed-SemiBold.ttf")
 const MONO_FONT = preload("res://assets/fonts/ibm_plex_mono/IBMPlexMono-Regular.ttf")
 const MONO_MEDIUM_FONT = preload("res://assets/fonts/ibm_plex_mono/IBMPlexMono-Medium.ttf")
+const TARGET_CURSOR = preload("res://assets/ui/target_cursor.svg")
 const ACID := Color("#b7f238")
 const CYAN := Color("#72e5d2")
 const INK := Color("#090b0d")
@@ -30,6 +31,7 @@ var smoke_test_mode := false
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	Input.set_custom_mouse_cursor(TARGET_CURSOR, Input.CURSOR_CROSS, Vector2(32.0, 32.0))
 	var user_args := OS.get_cmdline_user_args()
 	smoke_test_mode = "--smoke-test" in user_args
 	if not smoke_test_mode:
@@ -49,6 +51,20 @@ func _ready() -> void:
 		return
 	if "--flight-preview" in user_args:
 		_start_run()
+		return
+	if "--warehouse-preview" in user_args:
+		_start_run()
+		await get_tree().process_frame
+		await get_tree().process_frame
+		for target_index in range(flight_world.targets.size()):
+			var target: Dictionary = flight_world.targets[target_index]
+			if target.kind == "warehouse":
+				flight_world.formation.position.x = target.node.global_position.x
+				flight_world.formation.position.z = target.node.global_position.z + 28.0
+				flight_world.camera.position = flight_world.formation.position + Vector3(0.0, 7.5, 16.0)
+				flight_world.camera.look_at(target.node.global_position + Vector3(0.0, 2.5, 0.0))
+				flight_world._destroy_target(target_index, false)
+				break
 		return
 	if smoke_test_mode:
 		if screen.get_node_or_null("BootTerminal") == null:
@@ -81,13 +97,20 @@ func _ready() -> void:
 			return
 		var oil_tanks := 0
 		var air_defenses := 0
-		for target in flight_world.targets:
+		var warehouses := 0
+		var warehouse_index := -1
+		for target_index in range(flight_world.targets.size()):
+			var target: Dictionary = flight_world.targets[target_index]
 			if target.kind == "oil_tank":
 				oil_tanks += 1
 			elif target.kind == "air_defense":
 				air_defenses += 1
-		if flight_world.buildings.size() != 52 or oil_tanks != 12 or air_defenses != 12:
-			printerr("SMOKE_TEST_FAILED: city layout counts do not match the web version")
+			elif target.kind == "warehouse":
+				warehouses += 1
+				if warehouse_index < 0:
+					warehouse_index = target_index
+		if flight_world.buildings.size() != 52 or oil_tanks != 12 or air_defenses != 12 or warehouses != FlightWorld.WAREHOUSE_COUNT:
+			printerr("SMOKE_TEST_FAILED: city layout and warehouse counts are incomplete")
 			get_tree().quit(1)
 			return
 		var first_tank: Dictionary = flight_world.targets[0]
@@ -100,8 +123,20 @@ func _ready() -> void:
 			or not is_equal_approx(float(first_building.size.y), 19.4)
 			or flight_world.cross_roads.size() != 12
 			or not is_equal_approx(float(flight_world.cross_roads[0].position.z), -59.5)
+			or float(flight_world.formation.position.z) <= FlightWorld.CITY_FIRST_ROW_Z + FlightWorld.APPROACH_DISTANCE - 6.0
 		):
-			printerr("SMOKE_TEST_FAILED: seed 42 city layout differs from the web version")
+			printerr(
+				"SMOKE_TEST_FAILED: seed 42 city layout or approach differs — tank %s, building row %d at %s height %.2f, roads %d at %.2f, start %.2f"
+				% [
+					first_tank.node.position,
+					int(first_building.row),
+					first_building.position,
+					float(first_building.size.y),
+					flight_world.cross_roads.size(),
+					float(flight_world.cross_roads[0].position.z),
+					float(flight_world.formation.position.z),
+				]
+			)
 			get_tree().quit(1)
 			return
 		var tank_mesh := first_tank.body.mesh as CylinderMesh
@@ -113,6 +148,29 @@ func _ready() -> void:
 			or first_station.node.get_node_or_null("LauncherTubes") == null
 		):
 			printerr("SMOKE_TEST_FAILED: target models do not match the migrated dimensions")
+			get_tree().quit(1)
+			return
+		var warehouse: Dictionary = flight_world.targets[warehouse_index]
+		var warehouse_mesh := warehouse.body.mesh as BoxMesh
+		if (
+			warehouse.node.get_node_or_null("WarehouseRoof") == null
+			or warehouse_mesh.size != Vector3(20.0, 6.5, 11.0)
+			or flight_world.dead_trees.size() != 20
+			or flight_world.city_decorations.size() != 38
+		):
+			printerr("SMOKE_TEST_FAILED: warehouses or city decorations were not constructed")
+			get_tree().quit(1)
+			return
+		flight_world._destroy_target(warehouse_index, true)
+		flight_world._update_burning_sites(0.5)
+		if (
+			flight_world.burning_sites.size() != 1
+			or flight_world.burning_sites[0].flames.size() != 12
+			or flight_world.burning_sites[0].smoke.size() != 14
+			or float(flight_world.burning_sites[0].light.light_energy) <= 3.0
+			or game_state.score != 1170
+		):
+			printerr("SMOKE_TEST_FAILED: destroyed warehouse did not create heavy persistent fire")
 			get_tree().quit(1)
 			return
 		if not is_instance_valid(flight_world.storm_rain) or flight_world.storm_rain.multimesh.instance_count != 150:
@@ -144,6 +202,10 @@ func _ready() -> void:
 		_on_reduced_effects_toggled(true)
 		if is_instance_valid(flight_world.storm_rain):
 			printerr("SMOKE_TEST_FAILED: reduced effects did not remove the storm field")
+			get_tree().quit(1)
+			return
+		if flight_world.burning_sites[0].flames[6].node.visible or flight_world.burning_sites[0].smoke[6].node.visible:
+			printerr("SMOKE_TEST_FAILED: reduced effects did not reduce warehouse fire detail")
 			get_tree().quit(1)
 			return
 		var untouched_tank := 6
@@ -210,6 +272,10 @@ func _ready() -> void:
 			return
 		if not previous_reduced_effects and (not cloud.blobs[7].visible or cloud.rain.multimesh.visible_instance_count != -1):
 			printerr("SMOKE_TEST_FAILED: disabling reduced effects did not restore cloud detail")
+			get_tree().quit(1)
+			return
+		if not previous_reduced_effects and (not flight_world.burning_sites[0].flames[6].node.visible or not flight_world.burning_sites[0].smoke[6].node.visible):
+			printerr("SMOKE_TEST_FAILED: disabling reduced effects did not restore warehouse fire detail")
 			get_tree().quit(1)
 			return
 		if not flight_world.pending_targets.is_empty():
@@ -622,7 +688,7 @@ func _build_hud() -> void:
 	progress_row.add_child(hud.progress)
 	progress_row.add_child(_label("EXTRACT", 11, MUTED))
 
-	var controls := _label("WASD / LEFT STICK   FORMATION CONTROL    ·    MOUSE CLICK   ATTACK STATION OR OIL TANK", 12, Color("#c4d0c7"))
+	var controls := _label("WASD / LEFT STICK   FORMATION CONTROL    ·    MOUSE CLICK   ATTACK TARGET", 12, Color("#c4d0c7"))
 	controls.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	controls.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	controls.offset_left = 650

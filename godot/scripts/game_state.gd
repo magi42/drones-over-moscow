@@ -10,6 +10,7 @@ const SCORE_VALUES := {
 	"survivor": 1200,
 	"collateral": 150,
 	"oil_tank": 750,
+	"warehouse": 900,
 	"air_defense": 1100,
 	"near_miss": 100,
 }

@@ -26,6 +26,8 @@ const AIRCRAFT_PART_OFFSETS := [
 const CITY_FIRST_ROW_Z := 8.0
 const CITY_ROW_SPACING := 15.0
 const CITY_COLUMNS := [-72.0, -48.0, -24.0, 0.0, 24.0, 48.0, 72.0]
+const APPROACH_DISTANCE := 36.0
+const WAREHOUSE_COUNT := 6
 const BUILDING_COLLAPSE_SECONDS := 6.0
 const GROUND_DAMAGE_COOLDOWN := 8.0
 
@@ -40,9 +42,12 @@ var refills: Array[Dictionary] = []
 var pending_targets: Array[Dictionary] = []
 var buildings: Array[Dictionary] = []
 var pollution_clouds: Array[Dictionary] = []
+var burning_sites: Array[Dictionary] = []
 var rooftop_people: Array[Dictionary] = []
 var tank_lids: Array[RigidBody3D] = []
 var cross_roads: Array[Node3D] = []
+var dead_trees: Array[Node3D] = []
+var city_decorations: Array[Node3D] = []
 var storm_rain: MultiMeshInstance3D
 var storm_drops: Array[Dictionary] = []
 var direct_fire_stations := {}
@@ -119,6 +124,7 @@ func _physics_process(delta: float) -> void:
 	_update_refills(delta)
 	_update_missiles(delta)
 	_update_pollution(delta)
+	_update_burning_sites(delta)
 	_update_storm(delta)
 	_update_building_damage(delta)
 	_update_rooftop_people(delta)
@@ -173,7 +179,7 @@ func _build_environment() -> void:
 
 	var ground := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
-	plane.size = Vector2(340.0, 470.0)
+	plane.size = Vector2(340.0, 520.0)
 	ground.mesh = plane
 	ground.position = Vector3(0.0, -3.0, -190.0)
 	var ground_material := _material(Color("#b5bab4"), 1.0)
@@ -181,7 +187,7 @@ func _build_environment() -> void:
 	ground_material.uv1_scale = Vector3(18.0, 14.0, 1.0)
 	ground.material_override = ground_material
 	add_child(ground)
-	_add_static_collision(ground.position - Vector3(0.0, 0.25, 0.0), Vector3(340.0, 0.5, 470.0))
+	_add_static_collision(ground.position - Vector3(0.0, 0.25, 0.0), Vector3(340.0, 0.5, 520.0))
 
 	_build_storm_field()
 
@@ -212,7 +218,7 @@ func _build_storm_field() -> void:
 			"position": Vector3(
 				weather_rng.randf_range(-47.0, 47.0),
 				weather_rng.randf_range(-1.0, 31.0),
-				weather_rng.randf_range(-255.0, 25.0)
+				weather_rng.randf_range(-255.0, 58.0)
 			),
 			"speed": weather_rng.randf_range(10.0, 18.0),
 			"length": weather_rng.randf_range(0.55, 1.7),
@@ -241,6 +247,15 @@ func set_reduced_effects(enabled: bool) -> void:
 				blobs[blob_index].visible = not enabled or blob_index < 7
 		var rain: MultiMeshInstance3D = cloud.rain
 		rain.multimesh.visible_instance_count = 28 if enabled else -1
+	for site in burning_sites:
+		var flames: Array = site.flames
+		for flame_index in range(flames.size()):
+			if is_instance_valid(flames[flame_index].node):
+				flames[flame_index].node.visible = not enabled or flame_index < 6
+		var smoke: Array = site.smoke
+		for smoke_index in range(smoke.size()):
+			if is_instance_valid(smoke[smoke_index].node):
+				smoke[smoke_index].node.visible = not enabled or smoke_index < 6
 
 
 func _update_storm(delta: float) -> void:
@@ -299,6 +314,21 @@ func _build_city() -> void:
 		var key := "%d:%d" % [int(cell.row), int(cell.column)]
 		if not station_keys.has(key):
 			building_cells.append(cell)
+
+	var occupied_keys := {}
+	for cell in tank_cells:
+		occupied_keys["%d:%d" % [int(cell.row), int(cell.column)]] = true
+	for cell in building_cells:
+		occupied_keys["%d:%d" % [int(cell.row), int(cell.column)]] = true
+	var warehouse_cells: Array[Dictionary] = []
+	for cell in cells:
+		var warehouse_row := int(cell.row)
+		var warehouse_key := "%d:%d" % [warehouse_row, int(cell.column)]
+		if warehouse_row >= 4 and warehouse_row <= 22 and not occupied_keys.has(warehouse_key):
+			warehouse_cells.append(cell)
+			occupied_keys[warehouse_key] = true
+			if warehouse_cells.size() == WAREHOUSE_COUNT:
+				break
 
 	var station_buildings: Array[int] = []
 	var upper_colors := [Color("#d94c4c"), Color("#315fbd"), Color("#d7a92f"), Color("#4f8f59")]
@@ -376,7 +406,10 @@ func _build_city() -> void:
 		_create_tank(Vector3(float(cell.x), 1.5, float(cell.z)))
 	for building_index in station_buildings:
 		_create_station(building_index)
+	for cell in warehouse_cells:
+		_create_warehouse(Vector3(float(cell.x), 0.0, float(cell.z)))
 	_build_cross_roads()
+	_build_city_decorations(occupied_keys)
 
 
 func _build_cross_roads() -> void:
@@ -405,6 +438,116 @@ func _build_cross_roads() -> void:
 			marker.material_override = marker_material
 			road_root.add_child(marker)
 		road_row += 1 + floori(city_rng.next() * 3.0)
+
+
+func _build_city_decorations(occupied_keys: Dictionary) -> void:
+	var decor_rng := RandomNumberGenerator.new()
+	decor_rng.seed = state.run_seed ^ 0x4445434f52
+	var open_cells: Array[Dictionary] = []
+	for row in range(3, 27):
+		for column in range(CITY_COLUMNS.size()):
+			var key := "%d:%d" % [row, column]
+			if not occupied_keys.has(key):
+				open_cells.append({"row": row, "column": column})
+	for index in range(open_cells.size() - 1, 0, -1):
+		var swap_index := decor_rng.randi_range(0, index)
+		var temporary := open_cells[index]
+		open_cells[index] = open_cells[swap_index]
+		open_cells[swap_index] = temporary
+
+	var tree_count := mini(20, open_cells.size())
+	for index in range(tree_count):
+		var cell: Dictionary = open_cells[index]
+		var tree := _make_dead_tree(decor_rng)
+		tree.position = Vector3(
+			CITY_COLUMNS[int(cell.column)] + decor_rng.randf_range(-4.5, 4.5),
+			-2.75,
+			CITY_FIRST_ROW_Z - float(cell.row) * CITY_ROW_SPACING + decor_rng.randf_range(-3.5, 3.5)
+		)
+		tree.rotation.y = decor_rng.randf_range(0.0, TAU)
+		add_child(tree)
+		dead_trees.append(tree)
+
+	for index in range(24):
+		var lamp := _make_street_lamp()
+		var side := -1.0 if index % 2 == 0 else 1.0
+		lamp.position = Vector3(side * 88.0, -3.0, CITY_FIRST_ROW_Z - 8.0 - float(index) * 16.0)
+		lamp.rotation.y = -side * PI * 0.5
+		add_child(lamp)
+		city_decorations.append(lamp)
+
+	for index in range(14):
+		var cell_index := tree_count + index
+		if cell_index >= open_cells.size():
+			break
+		var cell: Dictionary = open_cells[cell_index]
+		var rubble := _make_rubble_cluster(decor_rng)
+		rubble.position = Vector3(
+			CITY_COLUMNS[int(cell.column)] + decor_rng.randf_range(-3.0, 3.0),
+			-2.82,
+			CITY_FIRST_ROW_Z - float(cell.row) * CITY_ROW_SPACING + decor_rng.randf_range(-2.5, 2.5)
+		)
+		rubble.rotation.y = decor_rng.randf_range(0.0, TAU)
+		add_child(rubble)
+		city_decorations.append(rubble)
+
+
+func _make_dead_tree(decor_rng: RandomNumberGenerator) -> Node3D:
+	var tree := Node3D.new()
+	var height := decor_rng.randf_range(5.5, 9.5)
+	var bark := Color("#3d3931")
+	_add_cylinder_segment(tree, Vector3.ZERO, Vector3(0.0, height, 0.0), 0.24, bark)
+	for branch_index in range(6):
+		var start_height := height * (0.42 + float(branch_index) * 0.075)
+		var angle := decor_rng.randf_range(0.0, TAU)
+		var length := decor_rng.randf_range(1.4, 2.9)
+		var start := Vector3(0.0, start_height, 0.0)
+		var finish := start + Vector3(cos(angle) * length, length * decor_rng.randf_range(0.35, 0.75), sin(angle) * length)
+		_add_cylinder_segment(tree, start, finish, 0.09, bark.lightened(0.05))
+		if branch_index % 2 == 0:
+			var twig_finish := finish + Vector3(cos(angle + 0.7), 0.8, sin(angle + 0.7)) * length * 0.42
+			_add_cylinder_segment(tree, finish, twig_finish, 0.045, bark.lightened(0.08))
+	return tree
+
+
+func _add_cylinder_segment(parent: Node3D, start: Vector3, finish: Vector3, radius: float, color: Color) -> void:
+	var direction := finish - start
+	var branch := MeshInstance3D.new()
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = radius * 0.62
+	mesh.bottom_radius = radius
+	mesh.height = direction.length()
+	mesh.radial_segments = 6
+	branch.mesh = mesh
+	branch.position = (start + finish) * 0.5
+	branch.basis = Basis(Quaternion(Vector3.UP, direction.normalized()))
+	branch.material_override = _material(color, 0.94)
+	parent.add_child(branch)
+
+
+func _make_street_lamp() -> Node3D:
+	var lamp := Node3D.new()
+	_add_cylinder_segment(lamp, Vector3.ZERO, Vector3(0.0, 5.8, 0.0), 0.11, Color("#303632"))
+	_add_cylinder_segment(lamp, Vector3(0.0, 5.7, 0.0), Vector3(0.0, 5.7, -1.4), 0.08, Color("#303632"))
+	_add_box(lamp, Vector3(0.65, 0.22, 0.95), Vector3(0.0, 5.55, -1.55), Color("#a9a779"))
+	return lamp
+
+
+func _make_rubble_cluster(decor_rng: RandomNumberGenerator) -> Node3D:
+	var rubble := Node3D.new()
+	for piece_index in range(5):
+		var piece_size := Vector3(
+			decor_rng.randf_range(0.7, 2.0),
+			decor_rng.randf_range(0.25, 0.7),
+			decor_rng.randf_range(0.6, 1.7)
+		)
+		_add_box(
+			rubble,
+			piece_size,
+			Vector3(decor_rng.randf_range(-2.0, 2.0), piece_size.y * 0.5, decor_rng.randf_range(-1.5, 1.5)),
+			Color("#595b55").lightened(decor_rng.randf_range(-0.08, 0.12))
+		)
+	return rubble
 
 
 func _add_static_collision(position: Vector3, size: Vector3) -> StaticBody3D:
@@ -536,6 +679,80 @@ func _add_windows(building: MeshInstance3D, width: float, height: float) -> void
 	building.add_child(windows)
 
 
+func _create_warehouse(position: Vector3) -> void:
+	var area := Area3D.new()
+	area.position = position
+	var size := Vector3(20.0, 6.5, 11.0)
+	var body := MeshInstance3D.new()
+	body.name = "WarehouseBody"
+	var body_mesh := BoxMesh.new()
+	body_mesh.size = size
+	body.mesh = body_mesh
+	body.position.y = 0.25
+	var wall_material := _material(Color("#817e73"), 0.78)
+	wall_material.metallic = 0.18
+	body.material_override = wall_material
+	area.add_child(body)
+
+	var roof := Node3D.new()
+	roof.name = "WarehouseRoof"
+	area.add_child(roof)
+	for side in [-1.0, 1.0]:
+		var slope := MeshInstance3D.new()
+		var slope_mesh := BoxMesh.new()
+		slope_mesh.size = Vector3(10.7, 0.42, 11.7)
+		slope.mesh = slope_mesh
+		slope.position = Vector3(side * 4.75, 3.82, 0.0)
+		slope.rotation.z = -side * 0.22
+		var roof_material := _material(Color("#4f5651"), 0.7)
+		roof_material.metallic = 0.42
+		slope.material_override = roof_material
+		roof.add_child(slope)
+
+	for door_x in [-6.2, 0.0, 6.2]:
+		var door := MeshInstance3D.new()
+		var door_mesh := BoxMesh.new()
+		door_mesh.size = Vector3(4.4, 4.2, 0.24)
+		door.mesh = door_mesh
+		door.position = Vector3(door_x, -0.7, 5.57)
+		door.material_override = _material(Color("#343a38"), 0.66)
+		area.add_child(door)
+		for stripe_index in range(4):
+			var stripe := MeshInstance3D.new()
+			var stripe_mesh := BoxMesh.new()
+			stripe_mesh.size = Vector3(4.1, 0.055, 0.28)
+			stripe.mesh = stripe_mesh
+			stripe.position = Vector3(door_x, -2.05 + float(stripe_index) * 1.0, 5.72)
+			stripe.material_override = _material(Color("#68706b"), 0.78)
+			area.add_child(stripe)
+
+	for vent_x in [-5.8, 5.8]:
+		var vent := MeshInstance3D.new()
+		var vent_mesh := CylinderMesh.new()
+		vent_mesh.top_radius = 0.48
+		vent_mesh.bottom_radius = 0.58
+		vent_mesh.height = 2.1
+		vent_mesh.radial_segments = 8
+		vent.mesh = vent_mesh
+		vent.position = Vector3(vent_x, 5.0, 0.0)
+		vent.material_override = _material(Color("#626963"), 0.58)
+		roof.add_child(vent)
+
+	var shape_node := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = size
+	shape_node.shape = shape
+	shape_node.position.y = 0.25
+	area.add_child(shape_node)
+	_add_target_indicator(area, 9.4, 5.2)
+	_register_target(area, "warehouse")
+	var target_index := targets.size() - 1
+	targets[target_index].body = body
+	targets[target_index].destroyable_visuals = [roof]
+	targets[target_index].collision_size = size
+	targets[target_index].collision_center = Vector3(0.0, 0.25, 0.0)
+
+
 func _create_tank(position: Vector3) -> void:
 	var area := Area3D.new()
 	area.position = position
@@ -650,16 +867,30 @@ func _create_station(building_index: int) -> void:
 func _add_target_indicator(area: Area3D, radius: float, height: float) -> void:
 	var indicator := MeshInstance3D.new()
 	indicator.name = "TargetIndicator"
+	var display_radius := radius + 0.9
 	var ring := TorusMesh.new()
-	ring.inner_radius = radius - 0.22
-	ring.outer_radius = radius
-	ring.rings = 12
-	ring.ring_segments = 32
+	ring.inner_radius = display_radius - 0.68
+	ring.outer_radius = display_radius
+	ring.rings = 16
+	ring.ring_segments = 48
 	indicator.mesh = ring
 	indicator.position.y = height
-	var material := _material(Color(1.0, 0.35, 0.12, 0.58), 0.35, Color("#ff5b35"))
+	var material := _material(Color(1.0, 0.28, 0.08, 0.86), 0.25, Color("#ff4b1f"))
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.emission_energy_multiplier = 2.8
+	material.no_depth_test = true
 	indicator.material_override = material
+	for tick_index in range(4):
+		var angle := float(tick_index) * PI * 0.5
+		var tick := MeshInstance3D.new()
+		var tick_mesh := BoxMesh.new()
+		tick_mesh.size = Vector3(2.1, 0.18, 0.62)
+		tick.mesh = tick_mesh
+		tick.position = Vector3(cos(angle), 0.0, sin(angle)) * (display_radius + 1.0)
+		tick.rotation.y = -angle
+		tick.material_override = material
+		indicator.add_child(tick)
 	area.add_child(indicator)
 
 
@@ -746,7 +977,7 @@ func _register_target(area: Area3D, kind: String, building_index := -1) -> void:
 
 func _build_formation() -> void:
 	formation = Node3D.new()
-	formation.position = Vector3(0.0, 5.0, CITY_FIRST_ROW_Z)
+	formation.position = Vector3(0.0, 5.0, CITY_FIRST_ROW_Z + APPROACH_DISTANCE)
 	add_child(formation)
 	for offset in FORMATION_OFFSETS:
 		var drone := _make_drone()
@@ -1120,6 +1351,16 @@ func _find_structure_hit(parts: Array[Vector3], intended_target_index := -1) -> 
 				continue
 			var target := targets[target_index]
 			var target_position: Vector3 = target.node.global_position
+			if target.kind == "warehouse":
+				var warehouse_size: Vector3 = target.collision_size
+				var warehouse_center := target_position + Vector3(target.collision_center)
+				if (
+					absf(position.x - warehouse_center.x) <= warehouse_size.x * 0.5
+					and absf(position.y - warehouse_center.y) <= warehouse_size.y * 0.5
+					and absf(position.z - warehouse_center.z) <= warehouse_size.z * 0.5
+				):
+					return {"kind": "target", "index": target_index}
+				continue
 			var horizontal := Vector2(position.x - target_position.x, position.z - target_position.z)
 			var radius := 4.5 if target.kind == "oil_tank" else 4.0
 			var vertical_hit := (
@@ -1194,6 +1435,10 @@ func _destroy_target(target_index: int, award_score := true) -> void:
 		stations_destroyed += 1
 		if award_score:
 			state.add_score("air_defense")
+	elif target.kind == "warehouse":
+		if award_score:
+			state.add_score("warehouse")
+		_spawn_warehouse_fire(target.node.global_position)
 	else:
 		if award_score:
 			state.add_score("oil_tank")
@@ -1202,7 +1447,10 @@ func _destroy_target(target_index: int, award_score := true) -> void:
 	if is_instance_valid(target.indicator):
 		target.indicator.visible = false
 	if target.has("body") and is_instance_valid(target.body):
-		target.body.material_override = _material(Color("#4c4b45") if target.kind == "oil_tank" else Color("#292723"), 0.95)
+		var destroyed_color := Color("#4c4b45") if target.kind == "oil_tank" else Color("#292723")
+		if target.kind == "warehouse":
+			destroyed_color = Color("#181512")
+		target.body.material_override = _material(destroyed_color, 0.95)
 	for visual in target.get("destroyable_visuals", []):
 		if is_instance_valid(visual):
 			visual.visible = false
@@ -1218,8 +1466,9 @@ func _set_target_indicator(target_index: int, targeted: bool) -> void:
 	if not is_instance_valid(indicator):
 		return
 	var material := indicator.material_override as StandardMaterial3D
-	material.albedo_color = Color(1.0, 0.80, 0.25, 0.92) if targeted else Color(1.0, 0.35, 0.12, 0.58)
-	material.emission = Color("#ffcf45") if targeted else Color("#ff5b35")
+	material.albedo_color = Color(1.0, 0.84, 0.22, 1.0) if targeted else Color(1.0, 0.28, 0.08, 0.86)
+	material.emission = Color("#ffe45c") if targeted else Color("#ff4b1f")
+	material.emission_energy_multiplier = 3.8 if targeted else 2.8
 
 
 func _spawn_explosion(position: Vector3) -> void:
@@ -1251,6 +1500,115 @@ func _spawn_explosion(position: Vector3) -> void:
 		tween.tween_property(material, "albedo_color:a", 0.0, 1.5)
 		tween.tween_property(material, "emission:a", 0.0, 1.5)
 	tween.chain().tween_callback(explosion.queue_free)
+
+
+func _spawn_warehouse_fire(position: Vector3) -> void:
+	var root := Node3D.new()
+	root.position = position
+	add_child(root)
+	var fire_rng := RandomNumberGenerator.new()
+	fire_rng.seed = state.run_seed ^ (roundi(position.x * 97.0) << 8) ^ roundi(position.z * 131.0)
+	var flames: Array[Dictionary] = []
+	for flame_index in range(12):
+		var flame := MeshInstance3D.new()
+		var cone := CylinderMesh.new()
+		cone.top_radius = 0.08
+		cone.bottom_radius = fire_rng.randf_range(0.65, 1.25)
+		cone.height = fire_rng.randf_range(2.8, 5.8)
+		cone.radial_segments = 7
+		flame.mesh = cone
+		var base := Vector3(
+			fire_rng.randf_range(-8.2, 8.2),
+			4.0 + cone.height * 0.45,
+			fire_rng.randf_range(-4.2, 4.2)
+		)
+		flame.position = base
+		var fire_color := Color("#ff5c16") if flame_index % 3 else Color("#ffd04a")
+		var fire_material := _material(fire_color, 0.3, fire_color)
+		fire_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fire_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		fire_material.emission_energy_multiplier = 2.4
+		flame.material_override = fire_material
+		flame.visible = not state.reduced_effects or flame_index < 6
+		root.add_child(flame)
+		flames.append({
+			"node": flame,
+			"base": base,
+			"phase": fire_rng.randf_range(0.0, TAU),
+			"speed": fire_rng.randf_range(5.0, 9.0),
+			"scale": fire_rng.randf_range(0.85, 1.35),
+		})
+
+	var smoke: Array[Dictionary] = []
+	for smoke_index in range(14):
+		var puff := MeshInstance3D.new()
+		var sphere := SphereMesh.new()
+		sphere.radius = 1.0
+		sphere.height = 2.0
+		sphere.radial_segments = 8
+		sphere.rings = 4
+		puff.mesh = sphere
+		var smoke_material := _material(Color(0.035, 0.032, 0.028, 0.82), 1.0, Color("#120b06"))
+		smoke_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		smoke_material.emission_energy_multiplier = 0.16
+		puff.material_override = smoke_material
+		puff.visible = not state.reduced_effects or smoke_index < 6
+		root.add_child(puff)
+		smoke.append({
+			"node": puff,
+			"x": fire_rng.randf_range(-7.8, 7.8),
+			"z": fire_rng.randf_range(-3.8, 3.8),
+			"phase": fire_rng.randf(),
+			"speed": fire_rng.randf_range(0.07, 0.13),
+			"scale": fire_rng.randf_range(1.4, 2.6),
+		})
+
+	var firelight := OmniLight3D.new()
+	firelight.position = Vector3(0.0, 5.5, 0.0)
+	firelight.light_color = Color("#ff6b24")
+	firelight.light_energy = 5.4
+	firelight.omni_range = 25.0
+	firelight.shadow_enabled = false
+	root.add_child(firelight)
+	burning_sites.append({
+		"root": root,
+		"age": 0.0,
+		"flames": flames,
+		"smoke": smoke,
+		"light": firelight,
+	})
+	_spawn_explosion(position + Vector3(-5.8, 2.8, 0.6))
+	_spawn_explosion(position + Vector3(5.4, 2.5, -1.2))
+
+
+func _update_burning_sites(delta: float) -> void:
+	for site_index in range(burning_sites.size()):
+		var site: Dictionary = burning_sites[site_index]
+		site.age = float(site.age) + delta
+		var age := float(site.age)
+		for flame_data in site.flames:
+			var flame: MeshInstance3D = flame_data.node
+			if not is_instance_valid(flame):
+				continue
+			var pulse := 0.82 + sin(age * float(flame_data.speed) + float(flame_data.phase)) * 0.18
+			var base_scale := float(flame_data.scale)
+			flame.scale = Vector3(base_scale * pulse, base_scale * (0.9 + pulse * 0.25), base_scale * pulse)
+			flame.position = Vector3(flame_data.base) + Vector3(sin(age * 3.1 + float(flame_data.phase)) * 0.22, 0.0, cos(age * 2.7 + float(flame_data.phase)) * 0.18)
+		for smoke_data in site.smoke:
+			var puff: MeshInstance3D = smoke_data.node
+			if not is_instance_valid(puff):
+				continue
+			var cycle := fposmod(float(smoke_data.phase) + age * float(smoke_data.speed), 1.0)
+			puff.position = Vector3(
+				float(smoke_data.x) + sin(cycle * TAU + float(smoke_data.phase)) * cycle * 2.4,
+				6.0 + cycle * 20.0,
+				float(smoke_data.z) + cos(cycle * TAU + float(smoke_data.phase)) * cycle * 1.6
+			)
+			var puff_scale := float(smoke_data.scale) * (0.55 + cycle * 1.35)
+			puff.scale = Vector3(puff_scale, puff_scale * 0.72, puff_scale)
+		var firelight: OmniLight3D = site.light
+		firelight.light_energy = 4.8 + sin(age * 8.0) * 0.8 + sin(age * 13.0) * 0.4
+		burning_sites[site_index] = site
 
 
 func _spawn_tank_aftermath(position: Vector3) -> void:
@@ -1382,6 +1740,8 @@ func _update_pollution(delta: float) -> void:
 
 
 func _update_rooftop_people(delta: float) -> void:
+	if formation.global_position.z > CITY_FIRST_ROW_Z:
+		return
 	var fleet_row := maxi(0, floori((CITY_FIRST_ROW_Z - formation.global_position.z) / CITY_ROW_SPACING))
 	for index in range(rooftop_people.size()):
 		var person := rooftop_people[index]
@@ -1589,11 +1949,11 @@ func _choose_environment_impact() -> Dictionary:
 	var candidates: Array[Dictionary] = []
 	for target_index in range(targets.size()):
 		var target := targets[target_index]
-		if target.kind == "oil_tank" and not target.destroyed:
+		if target.kind in ["oil_tank", "warehouse"] and not target.destroyed:
 			candidates.append({
 				"kind": "target",
 				"index": target_index,
-				"position": target.node.global_position + Vector3(0.0, 2.2, 0.0),
+				"position": target.node.global_position + Vector3(0.0, 3.0 if target.kind == "warehouse" else 2.2, 0.0),
 			})
 	for building_index in range(buildings.size()):
 		var building := buildings[building_index]
